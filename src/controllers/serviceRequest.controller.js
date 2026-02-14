@@ -1,39 +1,151 @@
-const pool = require('../db'); // o tu conexión a postgres
+const pool = require('../db/db');
 
+
+// ==============================
+// CREAR SOLICITUD
+// ==============================
 exports.create = async (req, res) => {
   try {
-    // 🔐 validación de rol
-    if (!req.user || req.user.role !== 'client') {
-      return res.status(401).json({ error: 'Solo clientes pueden crear solicitudes' });
+
+    if (!req.user || req.user.role !== "client") {
+      return res.status(401).json({
+        ok:false,
+        error:"Solo clientes"
+      });
     }
 
-    const { service_type, address } = req.body;
+    let {
+      service_type,
+      price,
+      address,
+      latitude,
+      longitude
+    } = req.body;
 
-    if (!service_type || !address) {
-      return res.status(400).json({ error: 'Faltan datos' });
+    service_type = service_type?.toString().trim();
+    price = Number(price);
+
+    if(!service_type){
+      return res.status(400).json({
+        ok:false,
+        error:"Servicio requerido"
+      });
     }
 
-    const result = await pool.query(
-      `INSERT INTO service_request (client_id, service_type, address, status)
-       VALUES ($1, $2, $3, 'pending')
-       RETURNING *`,
-      [req.user.id, service_type, address]
-    );
+    if(!address){
+      return res.status(400).json({
+        ok:false,
+        error:"Dirección requerida"
+      });
+    }
 
-    res.json(result.rows[0]);
+    const result = await pool.query(`
+      INSERT INTO service_request
+      (client_id,service_type,address,latitude,longitude,price,status)
+      VALUES($1,$2,$3,$4,$5,$6,'pending')
+      RETURNING *
+    `,
+    [
+      req.user.id,
+      service_type,
+      address,
+      latitude,
+      longitude,
+      price
+    ]);
+
+    res.json({
+      ok:true,
+      data:result.rows[0]
+    });
+
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Error creando solicitud' });
+    console.log(err);
+    res.status(500).json({
+      ok:false,
+      error:"Error creando solicitud"
+    });
   }
 };
 
-exports.list = async (req, res) => {
-  try {
+// ==============================
+// LISTAR SOLICITUDES
+// ==============================
+exports.list = async (req,res)=>{
+  try{
+
+    if(!req.user){
+      return res.status(401).json({
+        ok:false,
+        error:"No autorizado"
+      });
+    }
+
     const result = await pool.query(
-      'SELECT * FROM service_request ORDER BY requested_at DESC'
+      `
+      SELECT *
+      FROM service_request
+      WHERE client_id=$1
+      ORDER BY id DESC
+      `,
+      [req.user.id]
     );
-    res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: 'Error listando solicitudes' });
+
+    res.json({
+      ok:true,
+      data:result.rows
+    });
+
+  }catch(err){
+    console.error("🔥 ERROR LISTAR:",err);
+    res.status(500).json({
+      ok:false,
+      error:"Error listando solicitudes"
+    });
+  }
+};
+
+
+// ==============================
+// UPDATE STATUS (MVP UBER FLOW)
+// ==============================
+exports.updateStatus = async (req,res)=>{
+  try{
+
+    const { id } = req.params;
+    const { status } = req.body;
+
+    const allowed = [
+      "pending",
+      "accepted",
+      "on_route",
+      "completed",
+      "cancelled"
+    ];
+
+    if(!allowed.includes(status)){
+      return res.status(400).json({
+        ok:false,
+        error:"Estado inválido"
+      });
+    }
+
+    await pool.query(
+      `
+      UPDATE service_request
+      SET status=$1
+      WHERE id=$2
+      `,
+      [status,id]
+    );
+
+    res.json({ok:true});
+
+  }catch(err){
+    console.error("🔥 ERROR UPDATE STATUS:",err);
+    res.status(500).json({
+      ok:false,
+      error:"Error actualizando estado"
+    });
   }
 };

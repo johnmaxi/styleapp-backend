@@ -5,21 +5,60 @@ const cors = require("cors");
 
 const authRoutes = require("./src/routes/auth.routes");
 const userRoutes = require("./src/routes/user.routes");
+const serviceRequestRoutes = require("./src/routes/service-request.routes");
 
 const app = express();
 
+/* ========================
+   MIDDLEWARES GLOBALES
+======================== */
 app.use(cors());
 app.use(express.json());
 
-// rutas
-app.use("/auth", authRoutes);
-app.use("/usuarios", userRoutes);
+/* ========================
+   RUTAS API
+======================== */
+app.use("/api/auth", authRoutes);
+app.use("/api/usuarios", userRoutes);
+app.use("/api/service-requests", serviceRequestRoutes);
 
-// test
+/* ========================
+   HEALTH CHECK
+======================== */
 app.get("/", (req, res) => {
-  res.json({ ok: true, message: "API principal funcionando" });
+  res.json({
+    ok: true,
+    message: "🔥 StyleApp API funcionando correctamente",
+  });
 });
 
-app.listen(3000, () => {
-  console.log("🔥 Backend corriendo en http://localhost:3000");
+/* ========================
+   404 HANDLER
+======================== */
+app.use((req, res) => {
+  res.status(404).json({
+    ok: false,
+    error: "Endpoint no encontrado",
+  });
+});
+
+/* ========================
+   ERROR HANDLER GLOBAL
+======================== */
+app.use((err, req, res, next) => {
+  console.error("🔥 ERROR GLOBAL:", err);
+
+  res.status(err.status || 500).json({
+    ok: false,
+    error: err.message || "Error interno del servidor",
+  });
+});
+
+/* ========================
+   SERVER
+======================== */
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+  console.log(`🔥 Backend corriendo en http://localhost:${PORT}`);
 });
