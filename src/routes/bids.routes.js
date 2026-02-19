@@ -1,9 +1,16 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const auth = require('../middleware/auth.middleware');
-const controller = require('../controllers/bids.controller');
 
-router.post('/', auth, controller.create);
-router.get('/request/:id', auth, controller.listByRequest);
+const controller = require("../controllers/bids.controller");
+const auth = require("../middleware/auth.middleware");
+
+// Crear oferta (barbero)
+router.post("/", auth, controller.createBid);
+
+// Cliente ve ofertas
+router.get("/request/:id", auth, controller.getByRequest);
+
+// Cliente acepta oferta
+router.patch("/accept/:bidId", auth, controller.acceptBid);
 
 module.exports = router;

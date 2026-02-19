@@ -2,7 +2,7 @@ const pool = require('../db/db');
 
 
 // ==============================
-// CREAR SOLICITUD
+// CREAR SOLICITUD (CLIENTE)
 // ==============================
 exports.create = async (req, res) => {
   try {
@@ -41,8 +41,8 @@ exports.create = async (req, res) => {
 
     const result = await pool.query(`
       INSERT INTO service_request
-      (client_id,service_type,address,latitude,longitude,price,status)
-      VALUES($1,$2,$3,$4,$5,$6,'pending')
+      (client_id, service_type, address, latitude, longitude, price, status)
+      VALUES($1,$2,$3,$4,$5,$6,'open')
       RETURNING *
     `,
     [
@@ -68,16 +68,17 @@ exports.create = async (req, res) => {
   }
 };
 
+
 // ==============================
-// LISTAR SOLICITUDES
+// LISTAR SOLICITUDES DEL CLIENTE
 // ==============================
 exports.list = async (req,res)=>{
   try{
 
-    if(!req.user){
+    if(!req.user || req.user.role !== "client"){
       return res.status(401).json({
         ok:false,
-        error:"No autorizado"
+        error:"Solo clientes"
       });
     }
 
@@ -107,7 +108,42 @@ exports.list = async (req,res)=>{
 
 
 // ==============================
-// UPDATE STATUS (MVP UBER FLOW)
+// LISTAR SOLICITUDES ABIERTAS (BARBERO)
+// ==============================
+exports.listOpen = async (req,res)=>{
+  try{
+
+    if(!req.user || req.user.role !== "barber"){
+      return res.status(403).json({
+        ok:false,
+        error:"Solo barberos"
+      });
+    }
+
+    const result = await pool.query(`
+      SELECT *
+      FROM service_request
+      WHERE status = 'open'
+      ORDER BY id DESC
+    `);
+
+    res.json({
+      ok:true,
+      data: result.rows
+    });
+
+  }catch(err){
+    console.error("🔥 ERROR LIST OPEN:",err);
+    res.status(500).json({
+      ok:false,
+      error:"Error listando servicios abiertos"
+    });
+  }
+};
+
+
+// ==============================
+// UPDATE STATUS (FLUJO MVP)
 // ==============================
 exports.updateStatus = async (req,res)=>{
   try{
@@ -116,7 +152,7 @@ exports.updateStatus = async (req,res)=>{
     const { status } = req.body;
 
     const allowed = [
-      "pending",
+      "open",
       "accepted",
       "on_route",
       "completed",
