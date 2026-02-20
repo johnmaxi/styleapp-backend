@@ -5,11 +5,10 @@ const pool = require("../db/db");
  */
 exports.createBid = async (req, res) => {
   try {
-
     if (req.user.role !== "barber") {
       return res.status(403).json({
         ok: false,
-        error: "Solo barberos pueden ofertar"
+        error: "Solo barberos pueden ofertar",
       });
     }
 
@@ -18,28 +17,26 @@ exports.createBid = async (req, res) => {
     if (!service_request_id || !amount) {
       return res.status(400).json({
         ok: false,
-        error: "Datos incompletos"
+        error: "Datos incompletos",
       });
     }
 
-    // Validar que la solicitud exista y esté pendiente
     const request = await pool.query(
-      `SELECT * FROM service_request 
-       WHERE id=$1 AND status='pending'`,
+      `SELECT * FROM service_request
+       WHERE id=$1 AND status='open'`,
       [service_request_id]
     );
 
     if (request.rowCount === 0) {
       return res.status(404).json({
         ok: false,
-        error: "Solicitud no disponible"
+        error: "Solicitud no disponible",
       });
     }
 
-    // Evitar doble oferta del mismo barbero
     const existingBid = await pool.query(
-      `SELECT id FROM bids 
-       WHERE service_request_id=$1 
+      `SELECT id FROM bids
+       WHERE service_request_id=$1
        AND barber_id=$2`,
       [service_request_id, req.user.id]
     );
@@ -47,7 +44,7 @@ exports.createBid = async (req, res) => {
     if (existingBid.rowCount > 0) {
       return res.status(400).json({
         ok: false,
-        error: "Ya enviaste una oferta"
+        error: "Ya enviaste una oferta",
       });
     }
 
@@ -56,41 +53,33 @@ exports.createBid = async (req, res) => {
        (service_request_id, barber_id, amount)
        VALUES ($1,$2,$3)
        RETURNING *`,
-      [
-        service_request_id,
-        req.user.id,
-        amount
-      ]
+      [service_request_id, req.user.id, amount]
     );
 
-    res.json({
+    return res.json({
       ok: true,
-      data: newBid.rows[0]
+      data: newBid.rows[0],
     });
-
   } catch (err) {
     console.log(err);
-    res.status(500).json({ ok: false });
+    return res.status(500).json({ ok: false });
   }
 };
-
 
 /**
  * CLIENTE VE CONTRAOFERTAS DE UNA SOLICITUD
  */
 exports.getByRequest = async (req, res) => {
   try {
-
     if (req.user.role !== "client") {
       return res.status(403).json({
         ok: false,
-        error: "Solo clientes"
+        error: "Solo clientes",
       });
     }
 
     const { id } = req.params;
 
-    // Verificar que la solicitud pertenezca al cliente
     const request = await pool.query(
       `SELECT * FROM service_request
        WHERE id=$1 AND client_id=$2`,
@@ -100,12 +89,12 @@ exports.getByRequest = async (req, res) => {
     if (request.rowCount === 0) {
       return res.status(404).json({
         ok: false,
-        error: "Solicitud no encontrada"
+        error: "Solicitud no encontrada",
       });
     }
 
     const result = await pool.query(
-      `SELECT 
+      `SELECT
           bids.id,
           bids.amount,
           bids.status,
@@ -119,49 +108,44 @@ exports.getByRequest = async (req, res) => {
       [id]
     );
 
-    res.json({
+    return res.json({
       ok: true,
-      data: result.rows
+      data: result.rows,
     });
-
   } catch (err) {
     console.log(err);
-    res.status(500).json({ ok: false });
+    return res.status(500).json({ ok: false });
   }
 };
-
 
 /**
  * CLIENTE ACEPTA UNA CONTRAOFERTA
  */
 exports.acceptBid = async (req, res) => {
-  try {
+  const client = await pool.connect();
+  let started = false;
 
+  try {
     if (req.user.role !== "client") {
       return res.status(403).json({
         ok: false,
-        error: "Solo clientes"
+        error: "Solo clientes",
       });
     }
 
     const { bidId } = req.params;
 
-    const bidResult = await pool.query(
-      `SELECT * FROM bids WHERE id=$1`,
-      [bidId]
-    );
+    const bidResult = await client.query(`SELECT * FROM bids WHERE id=$1`, [bidId]);
 
     if (bidResult.rowCount === 0) {
       return res.status(404).json({
         ok: false,
-        error: "Oferta no encontrada"
+        error: "Oferta no encontrada",
       });
     }
 
     const bid = bidResult.rows[0];
-
-    // Validar que la solicitud sea del cliente
-    const request = await pool.query(
+    const request = await client.query(
       `SELECT * FROM service_request
        WHERE id=$1 AND client_id=$2`,
       [bid.service_request_id, req.user.id]
@@ -170,23 +154,20 @@ exports.acceptBid = async (req, res) => {
     if (request.rowCount === 0) {
       return res.status(403).json({
         ok: false,
-        error: "No autorizado"
+        error: "No autorizado",
       });
     }
 
-    // Transacción
-    await pool.query("BEGIN");
+    await client.query("BEGIN");
+    started = true;
 
-    // Aceptar la oferta elegida
-    await pool.query(
-      `UPDATE bids 
+    await client.query(
+      `UPDATE bids
        SET status='accepted'
        WHERE id=$1`,
       [bidId]
     );
-
-    // Rechazar las demás
-    await pool.query(
+    await client.query(
       `UPDATE bids
        SET status='rejected'
        WHERE service_request_id=$1
@@ -194,23 +175,28 @@ exports.acceptBid = async (req, res) => {
       [bid.service_request_id, bidId]
     );
 
-    // Actualizar solicitud
-    await pool.query(
+    await client.query(
+    
       `UPDATE service_request
        SET status='accepted'
        WHERE id=$1`,
       [bid.service_request_id]
     );
 
-    await pool.query("COMMIT");
+    await client.query("COMMIT");
 
-    res.json({
-      ok: true
-    });
-
+    return res.json({ ok: true });
   } catch (err) {
-    await pool.query("ROLLBACK");
+    if (started) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (rollbackError) {
+        console.error("ROLLBACK ERROR:", rollbackError.message);
+      }
+    }
     console.log(err);
-    res.status(500).json({ ok: false });
+    return res.status(500).json({ ok: false });
+  } finally {
+    client.release();
   }
 };

@@ -10,23 +10,24 @@ const bidsRoutes = require("./src/routes/bids.routes");
 
 const app = express();
 
-/* ========================
-   MIDDLEWARES GLOBALES
-======================== */
+
 app.use(cors());
 app.use(express.json());
 
-/* ========================
-   RUTAS API
-======================== */
+
+// Rutas versionadas (recomendadas)
 app.use("/api/auth", authRoutes);
 app.use("/api/usuarios", userRoutes);
 app.use("/api/service-requests", serviceRequestRoutes);
-app.use("/api/bids",bidsRoutes);
+app.use("/api/bids", bidsRoutes);
 
-/* ========================
-   HEALTH CHECK
-======================== */
+// Compatibilidad MVP (clientes existentes)
+app.use("/auth", authRoutes);
+app.use("/usuarios", userRoutes);
+app.use("/service-request", serviceRequestRoutes);
+app.use("/bids", bidsRoutes);
+
+
 app.get("/", (req, res) => {
   res.json({
     ok: true,
@@ -34,9 +35,7 @@ app.get("/", (req, res) => {
   });
 });
 
-/* ========================
-   404 HANDLER
-======================== */
+
 app.use((req, res) => {
   res.status(404).json({
     ok: false,
@@ -44,9 +43,7 @@ app.use((req, res) => {
   });
 });
 
-/* ========================
-   ERROR HANDLER GLOBAL
-======================== */
+
 app.use((err, req, res, next) => {
   console.error("🔥 ERROR GLOBAL:", err);
 
@@ -56,9 +53,7 @@ app.use((err, req, res, next) => {
   });
 });
 
-/* ========================
-   SERVER
-======================== */
+
 const PORT = process.env.PORT || 3000;
 
 app.listen(PORT, () => {
