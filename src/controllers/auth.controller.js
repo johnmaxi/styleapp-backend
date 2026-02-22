@@ -2,64 +2,65 @@ const pool = require("../db/db");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 
-function createToken(user) {
-  return jwt.sign(
-    { id: user.id, role: user.role },
-    process.env.JWT_SECRET,
-    { expiresIn: process.env.JWT_EXPIRES_IN || "1d" }
-  );
-}
-
 exports.register = async (req, res) => {
   try {
-    const { name, email, password, role, phone } = req.body;
+    const {
+      name,
+      email,
+      password,
+      phone,
+      role = "client",
+      gender,
+      address,
+      payment_method,
+      account_number,
+      account_type,
+      document_type,
+      document_number,
+      portfolio = [],
+      id_front,
+      id_back,
+    } = req.body;
 
-    if (!name || !email || !password || !role) {
-      return res.status(400).json({
-        ok: false,
-        error: "name, email, password y role son requeridos",
-      });
+    if (!name || !email || !password) {
+      return res.status(400).json({ ok: false, error: "Nombre, email y contraseña son obligatorios" });
     }
 
-    if (!["client", "barber"].includes(role)) {
-      return res.status(400).json({
-        ok: false,
-        error: "role debe ser client o barber",
-      });
+    const existing = await pool.query(`SELECT id FROM users WHERE email=$1`, [email]);
+    if (existing.rowCount > 0) {
+      return res.status(400).json({ ok: false, error: "El email ya está registrado" });
     }
 
-    const exists = await pool.query(
-      "SELECT id FROM users WHERE email = $1",
-      [email.toLowerCase().trim()]
-    );
-
-    if (exists.rowCount > 0) {
-      return res.status(409).json({
-        ok: false,
-        error: "El email ya está registrado",
-      });
-    }
-
-    const passwordHash = await bcrypt.hash(password, 10);
+    const hash = await bcrypt.hash(password, 10);
 
     const result = await pool.query(
-      `INSERT INTO users (name, email, password, role, phone)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id, name, email, role, phone`,
-      [name.trim(), email.toLowerCase().trim(), passwordHash, role, phone || null]
+      `INSERT INTO users
+      (name, email, password, role, phone, gender, address, payment_method, account_number, account_type, document_type, document_number, portfolio, id_front, id_back)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+      RETURNING id, name, email, role, phone, gender, address`,
+      [
+        name,
+        email,
+        hash,
+        role,
+        phone || null,
+        gender || null,
+        address || null,
+        payment_method || null,
+        account_number || null,
+        account_type || null,
+        document_type || null,
+        document_number || null,
+        JSON.stringify(portfolio || []),
+        id_front || null,
+        id_back || null,
+      ]
     );
 
-    const user = result.rows[0];
-    const token = createToken(user);
-
-    return res.status(201).json({
-      ok: true,
-      token,
-      user,
-    });
+    return res.status(201).json({ ok: true, user: result.rows[0] });
   } catch (error) {
     console.error("🔥 REGISTER ERROR:", error);
-    return res.status(500).json({ ok: false, error: "Error interno" });
+    return res.status(500).json({ ok: false, error: "Error registrando usuario" });
   }
 };
 
@@ -67,45 +68,39 @@ exports.login = async (req, res) => {
   try {
     const { email, password } = req.body;
 
-
-    if (!email || !password) {
-      return res.status(400).json({
-        ok: false,
-        error: "email y password son requeridos",
-      });
-    }
-
     const result = await pool.query(
-      "SELECT id, name, email, password, role, phone FROM users WHERE email = $1",
-      [email.toLowerCase().trim()]
+      "SELECT id, email, password, role, gender FROM users WHERE email = $1",
+      [email]
     );
 
     if (result.rows.length === 0) {
+      return res.status(401).json({ error: "Credenciales inválidas" });
     }
 
     const user = result.rows[0];
 
     const validPassword = await bcrypt.compare(password, user.password);
     if (!validPassword) {
-      return res.status(401).json({ ok: false, error: "Credenciales inválidas" });
+      return res.status(401).json({ error: "Credenciales inválidas" });
     }
 
-    const token = createToken(user);
-
+    const token = jwt.sign(
+      { id: user.id, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.JWT_EXPIRES_IN || "1d" }
+    );
 
     return res.json({
-      ok: true,
       token,
       user: {
         id: user.id,
-        name: user.name,
         email: user.email,
         role: user.role,
-        phone: user.phone,
+        gender: user.gender,
       },
     });
   } catch (error) {
     console.error("🔥 LOGIN ERROR:", error);
-    return res.status(500).json({ ok: false, error: "Error interno" });
+    return res.status(500).json({ error: "Error interno" });
   }
 };

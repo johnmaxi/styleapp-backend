@@ -1,187 +1,42 @@
-const pool = require('../db/db');
+const pool = require("../db/db");
 
-
-// ==============================
-// CREAR SOLICITUD (CLIENTE)
-// ==============================
-exports.create = async (req, res) => {
+exports.getAssignedForBarber = async (req, res) => {
   try {
-
-    if (!req.user || req.user.role !== "client") {
-      return res.status(401).json({
-        ok:false,
-        error:"Solo clientes"
-      });
-    }
-
-    let {
-      service_type,
-      price,
-      address,
-      latitude,
-      longitude
-    } = req.body;
-
-    service_type = service_type?.toString().trim();
-    price = Number(price);
-
-    if(!service_type){
-      return res.status(400).json({
-        ok:false,
-        error:"Servicio requerido"
-      });
-    }
-
-    if(!address){
-      return res.status(400).json({
-        ok:false,
-        error:"Dirección requerida"
-      });
-    }
-
-    const result = await pool.query(`
-      INSERT INTO service_request
-      (client_id, service_type, address, latitude, longitude, price, status)
-      VALUES($1,$2,$3,$4,$5,$6,'open')
-      RETURNING *
-    `,
-    [
-      req.user.id,
-      service_type,
-      address,
-      latitude,
-      longitude,
-      price
-    ]);
-
-    res.json({
-      ok:true,
-      data:result.rows[0]
-    });
-
-  } catch (err) {
-    console.log(err);
-    res.status(500).json({
-      ok:false,
-      error:"Error creando solicitud"
-    });
-  }
-};
-
-
-// ==============================
-// LISTAR SOLICITUDES DEL CLIENTE
-// ==============================
-exports.list = async (req,res)=>{
-  try{
-
-    if(!req.user || req.user.role !== "client"){
-      return res.status(401).json({
-        ok:false,
-        error:"Solo clientes"
-      });
+    if (!req.user || req.user.role !== "barber") {
+      return res.status(403).json({ ok: false, error: "Solo barberos" });
     }
 
     const result = await pool.query(
-      `
-      SELECT *
-      FROM service_request
-      WHERE client_id=$1
-      ORDER BY id DESC
-      `,
+      `SELECT *
+       FROM service_request
+       WHERE assigned_barber_id=$1
+         AND status IN ('accepted','on_route')
+       ORDER BY id DESC`,
       [req.user.id]
     );
 
-    res.json({
-      ok:true,
-      data:result.rows
-    });
-
-  }catch(err){
-    console.error("🔥 ERROR LISTAR:",err);
-    res.status(500).json({
-      ok:false,
-      error:"Error listando solicitudes"
-    });
+    return res.json({ ok: true, data: result.rows });
+  } catch (err) {
+    console.error("🔥 ERROR ASSIGNED BARBER:", err);
+    return res.status(500).json({ ok: false, error: "Error listando servicios asignados" });
   }
 };
 
-
-// ==============================
-// LISTAR SOLICITUDES ABIERTAS (BARBERO)
-// ==============================
-exports.listOpen = async (req,res)=>{
-  try{
-
-    if(!req.user || req.user.role !== "barber"){
-      return res.status(403).json({
-        ok:false,
-        error:"Solo barberos"
-      });
-    }
-
-    const result = await pool.query(`
-      SELECT *
-      FROM service_request
-      WHERE status = 'open'
-      ORDER BY id DESC
-    `);
-
-    res.json({
-      ok:true,
-      data: result.rows
-    });
-
-  }catch(err){
-    console.error("🔥 ERROR LIST OPEN:",err);
-    res.status(500).json({
-      ok:false,
-      error:"Error listando servicios abiertos"
-    });
-  }
-};
-
-
-// ==============================
-// UPDATE STATUS (FLUJO MVP)
-// ==============================
-exports.updateStatus = async (req,res)=>{
-  try{
-
+exports.updateStatus = async (req, res) => {
+  try {
     const { id } = req.params;
     const { status } = req.body;
 
-    const allowed = [
-      "open",
-      "accepted",
-      "on_route",
-      "completed",
-      "cancelled"
-    ];
+    const allowed = ["open", "accepted", "on_route", "completed", "cancelled"];
 
-    if(!allowed.includes(status)){
-      return res.status(400).json({
-        ok:false,
-        error:"Estado inválido"
-      });
+    if (!allowed.includes(status)) {
+      return res.status(400).json({ ok: false, error: "Estado inválido" });
     }
 
-    await pool.query(
-      `
-      UPDATE service_request
-      SET status=$1
-      WHERE id=$2
-      `,
-      [status,id]
-    );
-
-    res.json({ok:true});
-
-  }catch(err){
-    console.error("🔥 ERROR UPDATE STATUS:",err);
-    res.status(500).json({
-      ok:false,
-      error:"Error actualizando estado"
-    });
+    await pool.query(`UPDATE service_request SET status=$1 WHERE id=$2`, [status, id]);
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error("🔥 ERROR UPDATE STATUS:", err);
+    return res.status(500).json({ ok: false, error: "Error actualizando estado" });
   }
 };
