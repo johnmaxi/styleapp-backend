@@ -87,6 +87,27 @@ exports.getById = async (req, res) => {
   }
 };
 
+
+exports.getOpenForBarber = async (req, res) => {
+  try {
+    if (!req.user || req.user.role !== "barber") {
+      return res.status(403).json({ ok: false, error: "Solo barberos" });
+    }
+
+    const result = await pool.query(
+      `SELECT *
+       FROM service_request
+       WHERE status='open'
+       ORDER BY id DESC`
+    );
+
+    return res.json({ ok: true, data: result.rows });
+  } catch (err) {
+    console.error("🔥 ERROR OPEN FOR BARBER:", err);
+    return res.status(500).json({ ok: false, error: "Error listando solicitudes abiertas" });
+  }
+};
+
 exports.getAssignedForBarber = async (req, res) => {
   try {
     if (!req.user || req.user.role !== "barber") {
@@ -126,4 +147,4 @@ exports.updateStatus = async (req, res) => {
     console.error("🔥 ERROR UPDATE STATUS:", err);
     return res.status(500).json({ ok: false, error: "Error actualizando estado" });
   }
-  };
+};
