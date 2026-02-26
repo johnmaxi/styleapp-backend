@@ -1,4 +1,11 @@
 {
+  "name": "styleapp-backend",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "migrate": "node src/migrate.js"
+  },
   "dependencies": {
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
@@ -7,12 +14,6 @@
     "jsonwebtoken": "^9.0.3",
     "pg": "^8.16.3"
   },
-  "scripts": {
-    "start": "node server.js"
-  },
-  "name": "styleapp-backend",
-  "version": "1.0.0",
-  "main": "index.js",
   "keywords": [],
   "author": "",
   "license": "ISC",
