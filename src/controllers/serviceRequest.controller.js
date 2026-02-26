@@ -32,13 +32,12 @@ exports.create = async (req, res) => {
 
     return res.status(201).json({ ok: true, data: result.rows[0] });
   } catch (err) {
-    console.error("🔥 ERROR CREATE SERVICE REQUEST:", err);
+    console.error("馃敟 ERROR CREATE SERVICE REQUEST:", err);
     return res
       .status(500)
       .json({ ok: false, error: "Error creando solicitud de servicio" });
   }
 };
-
 
 exports.getMine = async (req, res) => {
   try {
@@ -56,7 +55,7 @@ exports.getMine = async (req, res) => {
 
     return res.json({ ok: true, data: result.rows });
   } catch (err) {
-    console.error("🔥 ERROR GET MINE:", err);
+    console.error("馃敟 ERROR GET MINE:", err);
     return res.status(500).json({ ok: false, error: "Error listando solicitudes" });
   }
 };
@@ -82,11 +81,10 @@ exports.getById = async (req, res) => {
 
     return res.json({ ok: true, data: result.rows[0] });
   } catch (err) {
-    console.error("🔥 ERROR GET BY ID:", err);
+    console.error("馃敟 ERROR GET BY ID:", err);
     return res.status(500).json({ ok: false, error: "Error obteniendo solicitud" });
   }
 };
-
 
 exports.getOpenForBarber = async (req, res) => {
   try {
@@ -103,7 +101,7 @@ exports.getOpenForBarber = async (req, res) => {
 
     return res.json({ ok: true, data: result.rows });
   } catch (err) {
-    console.error("🔥 ERROR OPEN FOR BARBER:", err);
+    console.error("馃敟 ERROR OPEN FOR BARBER:", err);
     return res.status(500).json({ ok: false, error: "Error listando solicitudes abiertas" });
   }
 };
@@ -125,26 +123,92 @@ exports.getAssignedForBarber = async (req, res) => {
 
     return res.json({ ok: true, data: result.rows });
   } catch (err) {
-    console.error("🔥 ERROR ASSIGNED BARBER:", err);
+    console.error("馃敟 ERROR ASSIGNED BARBER:", err);
     return res.status(500).json({ ok: false, error: "Error listando servicios asignados" });
   }
 };
 
+/**
+ * BARBERO ACEPTA UNA SOLICITUD DIRECTAMENTE
+ * Protecci贸n at贸mica con FOR UPDATE para evitar que dos barberos
+ * acepten la misma solicitud simult谩neamente.
+ *
+ * CAMBIOS vs versi贸n anterior:
+ * - Solo el rol 'barber' puede cambiar a 'accepted' por esta v铆a
+ * - Se usa transacci贸n con SELECT ... FOR UPDATE para bloquear la fila
+ * - Si la solicitud ya no est谩 'open', retorna 409 Conflict
+ * - Los dem谩s cambios de estado (on_route, completed, cancelled) siguen
+ *   siendo accesibles para el barbero asignado sin bloqueo especial
+ */
 exports.updateStatus = async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { status } = req.body;
+  const { id } = req.params;
+  const { status } = req.body;
 
-    const allowed = ["open", "accepted", "on_route", "completed", "cancelled"];
+  const allowed = ["open", "accepted", "on_route", "completed", "cancelled"];
 
-    if (!allowed.includes(status)) {
-      return res.status(400).json({ ok: false, error: "Estado inválido" });
+  if (!allowed.includes(status)) {
+    return res.status(400).json({ ok: false, error: "Estado inv谩lido" });
+  }
+
+  // 鈹€鈹€鈹€ Aceptar solicitud: flujo at贸mico exclusivo para barberos 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+  if (status === "accepted") {
+    if (!req.user || req.user.role !== "barber") {
+      return res.status(403).json({ ok: false, error: "Solo barberos pueden aceptar solicitudes" });
     }
 
-    await pool.query(`UPDATE service_request SET status=$1 WHERE id=$2`, [status, id]);
+    const client = await pool.connect();
+    let started = false;
+
+    try {
+      await client.query("BEGIN");
+      started = true;
+
+      // FOR UPDATE bloquea la fila hasta el COMMIT.
+      // Si otro barbero ya ejecut贸 esto primero, este query esperar谩
+      // y cuando lea encontrar谩 status != 'open', retornando 409.
+      const result = await client.query(
+        `SELECT id, status FROM service_request
+         WHERE id=$1 AND status='open'
+         FOR UPDATE`,
+        [id]
+      );
+
+      if (result.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          ok: false,
+          error: "Esta solicitud ya fue tomada por otro barbero",
+        });
+      }
+
+      await client.query(
+        `UPDATE service_request
+         SET status='accepted', assigned_barber_id=$1
+         WHERE id=$2`,
+        [req.user.id, id]
+      );
+
+      await client.query("COMMIT");
+
+      return res.json({ ok: true });
+    } catch (err) {
+      if (started) await client.query("ROLLBACK").catch(() => {});
+      console.error("馃敟 ERROR ACCEPT REQUEST:", err);
+      return res.status(500).json({ ok: false, error: "Error aceptando solicitud" });
+    } finally {
+      client.release();
+    }
+  }
+
+  // 鈹€鈹€鈹€ Otros cambios de estado (on_route, completed, cancelled, open) 鈹€鈹€鈹€鈹€鈹€
+  try {
+    await pool.query(
+      `UPDATE service_request SET status=$1 WHERE id=$2`,
+      [status, id]
+    );
     return res.json({ ok: true });
   } catch (err) {
-    console.error("🔥 ERROR UPDATE STATUS:", err);
+    console.error("馃敟 ERROR UPDATE STATUS:", err);
     return res.status(500).json({ ok: false, error: "Error actualizando estado" });
   }
 };
