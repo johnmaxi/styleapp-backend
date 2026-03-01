@@ -101,6 +101,7 @@ exports.getByRequest = async (req, res) => {
   }
 };
 
+// Profesional consulta sus bids — incluye estado de rechazo para notificar
 exports.getByRequestForBarber = async (req, res) => {
   try {
     if (!req.user || !PROFESSIONAL_ROLES.includes(req.user.role)) {
@@ -115,7 +116,32 @@ exports.getByRequestForBarber = async (req, res) => {
     return res.json({ ok: true, data: result.rows });
   } catch (err) {
     console.error("🔥 ERROR GET BY REQUEST FOR BARBER:", err);
-    return res.status(500).json({ ok: false, error: "Error obteniendo ofertas del profesional" });
+    return res.status(500).json({ ok: false, error: "Error obteniendo ofertas" });
+  }
+};
+
+// Profesional consulta TODAS sus bids (para notificaciones de rechazo)
+exports.getMyBids = async (req, res) => {
+  try {
+    if (!req.user || !PROFESSIONAL_ROLES.includes(req.user.role)) {
+      return res.status(403).json({ ok: false, error: "Solo profesionales" });
+    }
+    const result = await pool.query(
+      `SELECT bids.id, bids.service_request_id, bids.amount, bids.status, bids.created_at,
+              sr.service_type, sr.address, sr.price as original_price,
+              client.name as client_name
+       FROM bids
+       JOIN service_request sr ON sr.id = bids.service_request_id
+       LEFT JOIN users client ON client.id = sr.client_id
+       WHERE bids.barber_id=$1
+       ORDER BY bids.created_at DESC
+       LIMIT 50`,
+      [req.user.id]
+    );
+    return res.json({ ok: true, data: result.rows });
+  } catch (err) {
+    console.error("🔥 ERROR GET MY BIDS:", err);
+    return res.status(500).json({ ok: false, error: "Error obteniendo mis ofertas" });
   }
 };
 
@@ -142,6 +168,7 @@ exports.acceptBid = async (req, res) => {
     await client.query("BEGIN");
     started = true;
     await client.query(`UPDATE bids SET status='accepted' WHERE id=$1`, [bidId]);
+    // Las demás bids quedan como 'rejected' — los profesionales verán esto como notificación
     await client.query(
       `UPDATE bids SET status='rejected' WHERE service_request_id=$1 AND id<>$2`,
       [bid.service_request_id, bidId]
