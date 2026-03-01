@@ -9,11 +9,13 @@ exports.register = async (req, res) => {
   try {
     const {
       name, email, password, phone,
-      role = "client",
-      gender, address, payment_method,
-      account_number, account_type,
+      role = "client", gender,
+      address, city, neighborhood,
+      payment_method, account_number,
       document_type, document_number,
-      portfolio = [], id_front, id_back,
+      portfolio = [],
+      id_front, id_back,
+      profile_photo, diploma,
     } = req.body;
 
     if (!name || !email || !password) {
@@ -33,19 +35,23 @@ exports.register = async (req, res) => {
 
     const result = await pool.query(
       `INSERT INTO users
-      (name, email, password, role, phone, gender, address, payment_method,
-       account_number, account_type, document_type, document_number,
-       portfolio, id_front, id_back)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
-      RETURNING id, name, email, role, phone, gender, address`,
+       (name, email, password, role, phone, gender,
+        address, city, neighborhood,
+        payment_method, account_number,
+        document_type, document_number,
+        portfolio, id_front, id_back,
+        profile_photo, diploma)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)
+       RETURNING id, name, email, role, phone, gender, address, city, neighborhood`,
       [
         name, email, hash, role,
-        phone || null, gender || null, address || null,
+        phone || null, gender || null,
+        address || null, city || null, neighborhood || null,
         payment_method || null, account_number || null,
-        account_type || null, document_type || null,
-        document_number || null,
+        document_type || null, document_number || null,
         JSON.stringify(portfolio || []),
         id_front || null, id_back || null,
+        profile_photo || null, diploma || null,
       ]
     );
 
@@ -65,7 +71,8 @@ exports.login = async (req, res) => {
     }
 
     const result = await pool.query(
-      "SELECT id, email, password, role, gender, name FROM users WHERE email = $1",
+      `SELECT id, email, password, role, gender, name, profile_photo, rating
+       FROM users WHERE email = $1`,
       [email]
     );
 
@@ -94,6 +101,8 @@ exports.login = async (req, res) => {
         role: user.role,
         gender: user.gender,
         name: user.name,
+        profile_photo: user.profile_photo,
+        rating: user.rating,
       },
     });
   } catch (error) {
