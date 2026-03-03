@@ -38,7 +38,7 @@ exports.createBid = async (req, res) => {
       await client.query("ROLLBACK");
       return res.status(409).json({
         ok: false,
-        error: "Esta solicitud no está disponible para tu perfil o ya fue tomada",
+        error: "Esta solicitud no esta disponible para tu perfil o ya fue tomada",
       });
     }
 
@@ -65,7 +65,7 @@ exports.createBid = async (req, res) => {
     return res.json({ ok: true, data: newBid.rows[0] });
   } catch (err) {
     if (started) await client.query("ROLLBACK").catch(() => {});
-    console.error("🔥 ERROR CREATING BID:", err);
+    console.error("ERROR CREATING BID:", err);
     return res.status(500).json({ ok: false, error: "Error creando oferta" });
   } finally {
     client.release();
@@ -96,12 +96,11 @@ exports.getByRequest = async (req, res) => {
     );
     return res.json({ ok: true, data: result.rows });
   } catch (err) {
-    console.error("🔥 ERROR GET BY REQUEST:", err);
+    console.error("ERROR GET BY REQUEST:", err);
     return res.status(500).json({ ok: false, error: "Error obteniendo ofertas" });
   }
 };
 
-// Profesional consulta sus bids — incluye estado de rechazo para notificar
 exports.getByRequestForBarber = async (req, res) => {
   try {
     if (!req.user || !PROFESSIONAL_ROLES.includes(req.user.role)) {
@@ -115,12 +114,13 @@ exports.getByRequestForBarber = async (req, res) => {
     );
     return res.json({ ok: true, data: result.rows });
   } catch (err) {
-    console.error("🔥 ERROR GET BY REQUEST FOR BARBER:", err);
+    console.error("ERROR GET BY REQUEST FOR BARBER:", err);
     return res.status(500).json({ ok: false, error: "Error obteniendo ofertas" });
   }
 };
 
-// Profesional consulta TODAS sus bids (para notificaciones de rechazo)
+// Profesional ve TODAS sus bids activas (pending/accepted solamente)
+// Las rechazadas y completadas NO se devuelven para no saturar el inicio
 exports.getMyBids = async (req, res) => {
   try {
     if (!req.user || !PROFESSIONAL_ROLES.includes(req.user.role)) {
@@ -128,19 +128,46 @@ exports.getMyBids = async (req, res) => {
     }
     const result = await pool.query(
       `SELECT bids.id, bids.service_request_id, bids.amount, bids.status, bids.created_at,
-              sr.service_type, sr.address, sr.price as original_price,
+              sr.service_type, sr.address, sr.price as original_price, sr.status as request_status,
               client.name as client_name
        FROM bids
        JOIN service_request sr ON sr.id = bids.service_request_id
        LEFT JOIN users client ON client.id = sr.client_id
        WHERE bids.barber_id=$1
+         AND bids.status IN ('pending', 'accepted', 'rejected')
+         AND sr.status NOT IN ('cancelled', 'completed')
        ORDER BY bids.created_at DESC
        LIMIT 50`,
       [req.user.id]
     );
     return res.json({ ok: true, data: result.rows });
   } catch (err) {
-    console.error("🔥 ERROR GET MY BIDS:", err);
+    console.error("ERROR GET MY BIDS:", err);
+    return res.status(500).json({ ok: false, error: "Error obteniendo mis ofertas" });
+  }
+};
+
+// Igual que getMyBids pero incluye rechazadas para la pantalla "Mis ofertas"
+exports.getMyBidsAll = async (req, res) => {
+  try {
+    if (!req.user || !PROFESSIONAL_ROLES.includes(req.user.role)) {
+      return res.status(403).json({ ok: false, error: "Solo profesionales" });
+    }
+    const result = await pool.query(
+      `SELECT bids.id, bids.service_request_id, bids.amount, bids.status, bids.created_at,
+              sr.service_type, sr.address, sr.price as original_price, sr.status as request_status,
+              client.name as client_name
+       FROM bids
+       JOIN service_request sr ON sr.id = bids.service_request_id
+       LEFT JOIN users client ON client.id = sr.client_id
+       WHERE bids.barber_id=$1
+       ORDER BY bids.created_at DESC
+       LIMIT 100`,
+      [req.user.id]
+    );
+    return res.json({ ok: true, data: result.rows });
+  } catch (err) {
+    console.error("ERROR GET MY BIDS ALL:", err);
     return res.status(500).json({ ok: false, error: "Error obteniendo mis ofertas" });
   }
 };
@@ -168,7 +195,6 @@ exports.acceptBid = async (req, res) => {
     await client.query("BEGIN");
     started = true;
     await client.query(`UPDATE bids SET status='accepted' WHERE id=$1`, [bidId]);
-    // Las demás bids quedan como 'rejected' — los profesionales verán esto como notificación
     await client.query(
       `UPDATE bids SET status='rejected' WHERE service_request_id=$1 AND id<>$2`,
       [bid.service_request_id, bidId]
@@ -181,7 +207,7 @@ exports.acceptBid = async (req, res) => {
     return res.json({ ok: true });
   } catch (err) {
     if (started) await client.query("ROLLBACK").catch(() => {});
-    console.error("🔥 ERROR ACCEPT BID:", err);
+    console.error("ERROR ACCEPT BID:", err);
     return res.status(500).json({ ok: false, error: "Error aceptando oferta" });
   } finally {
     client.release();
@@ -225,7 +251,7 @@ exports.rejectBid = async (req, res) => {
     return res.json({ ok: true, message: "Oferta rechazada" });
   } catch (err) {
     if (started) await client.query("ROLLBACK").catch(() => {});
-    console.error("🔥 ERROR REJECT BID:", err);
+    console.error("ERROR REJECT BID:", err);
     return res.status(500).json({ ok: false, error: "Error rechazando oferta" });
   } finally {
     client.release();

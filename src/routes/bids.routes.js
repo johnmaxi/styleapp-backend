@@ -4,22 +4,17 @@ const router = express.Router();
 const controller = require("../controllers/bids.controller");
 const auth = require("../middleware/auth.middleware");
 
-// Crear oferta (cualquier profesional)
 router.post("/", auth, controller.createBid);
-
-// Cliente ve ofertas de una solicitud
 router.get("/request/:id", auth, controller.getByRequest);
-
-// Profesional ve sus ofertas en una solicitud específica
 router.get("/barber/request/:id", auth, controller.getByRequestForBarber);
 
-// Profesional ve TODAS sus ofertas (para notificaciones de rechazo/aceptación)
+// Para inicio: solo pending/accepted, excluye cancelados y completados
 router.get("/my-bids", auth, controller.getMyBids);
 
-// Cliente acepta oferta
-router.patch("/accept/:bidId", auth, controller.acceptBid);
+// Para pantalla "Mis ofertas": historial completo
+router.get("/my-bids/all", auth, controller.getMyBidsAll);
 
-// Cliente rechaza oferta
+router.patch("/accept/:bidId", auth, controller.acceptBid);
 router.patch("/reject/:bidId", auth, controller.rejectBid);
 
 module.exports = router;
