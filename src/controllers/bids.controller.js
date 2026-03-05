@@ -13,27 +13,21 @@ exports.createBid = async (req, res) => {
   if (!req.user || !PROFESSIONAL_ROLES.includes(req.user.role)) {
     return res.status(403).json({ ok: false, error: "Solo profesionales pueden ofertar" });
   }
-
   const { service_request_id, amount } = req.body;
   if (!service_request_id || !amount) {
     return res.status(400).json({ ok: false, error: "Datos incompletos" });
   }
-
   const client = await pool.connect();
   let started = false;
-
   try {
     await client.query("BEGIN");
     started = true;
-
     const proType = roleToProType[req.user.role];
     const requestResult = await client.query(
       `SELECT id, status FROM service_request
-       WHERE id=$1 AND status='open' AND professional_type=$2
-       FOR UPDATE`,
+       WHERE id=$1 AND status='open' AND professional_type=$2 FOR UPDATE`,
       [service_request_id, proType]
     );
-
     if (requestResult.rowCount === 0) {
       await client.query("ROLLBACK");
       return res.status(409).json({
@@ -41,12 +35,10 @@ exports.createBid = async (req, res) => {
         error: "Esta solicitud no esta disponible para tu perfil o ya fue tomada",
       });
     }
-
     const existingBid = await client.query(
       `SELECT id FROM bids WHERE service_request_id=$1 AND barber_id=$2 AND status='pending'`,
       [service_request_id, req.user.id]
     );
-
     if (existingBid.rowCount > 0) {
       await client.query("ROLLBACK");
       return res.status(400).json({
@@ -54,13 +46,11 @@ exports.createBid = async (req, res) => {
         error: "Ya enviaste una oferta pendiente para esta solicitud",
       });
     }
-
     const newBid = await client.query(
       `INSERT INTO bids (service_request_id, barber_id, amount)
        VALUES ($1,$2,$3) RETURNING *`,
       [service_request_id, req.user.id, amount]
     );
-
     await client.query("COMMIT");
     return res.json({ ok: true, data: newBid.rows[0] });
   } catch (err) {
@@ -87,7 +77,7 @@ exports.getByRequest = async (req, res) => {
     }
     const result = await pool.query(
       `SELECT bids.id, bids.amount, bids.status, bids.created_at,
-              users.id as barber_id, users.name
+              users.id as barber_id, users.name, users.phone
        FROM bids
        JOIN users ON users.id = bids.barber_id
        WHERE bids.service_request_id=$1
@@ -119,8 +109,6 @@ exports.getByRequestForBarber = async (req, res) => {
   }
 };
 
-// Profesional ve TODAS sus bids activas (pending/accepted solamente)
-// Las rechazadas y completadas NO se devuelven para no saturar el inicio
 exports.getMyBids = async (req, res) => {
   try {
     if (!req.user || !PROFESSIONAL_ROLES.includes(req.user.role)) {
@@ -147,7 +135,6 @@ exports.getMyBids = async (req, res) => {
   }
 };
 
-// Igual que getMyBids pero incluye rechazadas para la pantalla "Mis ofertas"
 exports.getMyBidsAll = async (req, res) => {
   try {
     if (!req.user || !PROFESSIONAL_ROLES.includes(req.user.role)) {
@@ -172,6 +159,7 @@ exports.getMyBidsAll = async (req, res) => {
   }
 };
 
+// FIX: al aceptar bid, actualizar price en service_request con el valor de la bid
 exports.acceptBid = async (req, res) => {
   const client = await pool.connect();
   let started = false;
@@ -194,15 +182,24 @@ exports.acceptBid = async (req, res) => {
     }
     await client.query("BEGIN");
     started = true;
+
+    // Marcar bid como aceptada
     await client.query(`UPDATE bids SET status='accepted' WHERE id=$1`, [bidId]);
+
+    // Rechazar las demás bids de la misma solicitud
     await client.query(
       `UPDATE bids SET status='rejected' WHERE service_request_id=$1 AND id<>$2`,
       [bid.service_request_id, bidId]
     );
+
+    // FIX CLAVE: actualizar status Y price con el valor de la bid aceptada
     await client.query(
-      `UPDATE service_request SET status='accepted', assigned_barber_id=$1 WHERE id=$2`,
-      [bid.barber_id, bid.service_request_id]
+      `UPDATE service_request
+       SET status='accepted', assigned_barber_id=$1, price=$2
+       WHERE id=$3`,
+      [bid.barber_id, bid.amount, bid.service_request_id]
     );
+
     await client.query("COMMIT");
     return res.json({ ok: true });
   } catch (err) {

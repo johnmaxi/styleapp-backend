@@ -4,10 +4,13 @@ const router = express.Router();
 const auth = require("../middleware/auth.middleware");
 const controller = require("../controllers/payments.controller");
 
-// Generar link de pago Wompi (requiere autenticacion)
+// Generar link de pago Wompi
 router.post("/wompi-link", auth, controller.createWompiLink);
 
-// Webhook de Wompi — NO requiere auth (viene de Wompi directamente)
+// Resultado de pago — Wompi redirige aqui (no requiere auth)
+router.get("/result", controller.paymentResult);
+
+// Webhook de Wompi (no requiere auth)
 router.post("/wompi-webhook", controller.wompiWebhook);
 
 // Consultar saldo
