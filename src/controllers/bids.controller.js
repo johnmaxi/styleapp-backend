@@ -4,8 +4,8 @@ const pool = require("../db/db");
 const PROFESSIONAL_ROLES = ["barber", "estilista", "quiropodologo"];
 
 const roleToProType = {
-  barber: "profesional",
-  estilista: "estilista",
+  barber:        "profesional",
+  estilista:     "estilista",
   quiropodologo: "quiropodologo",
 };
 
@@ -159,7 +159,6 @@ exports.getMyBidsAll = async (req, res) => {
   }
 };
 
-// FIX: al aceptar bid, actualizar price en service_request con el valor de la bid
 exports.acceptBid = async (req, res) => {
   const client = await pool.connect();
   let started = false;
@@ -182,24 +181,17 @@ exports.acceptBid = async (req, res) => {
     }
     await client.query("BEGIN");
     started = true;
-
-    // Marcar bid como aceptada
     await client.query(`UPDATE bids SET status='accepted' WHERE id=$1`, [bidId]);
-
-    // Rechazar las demás bids de la misma solicitud
     await client.query(
       `UPDATE bids SET status='rejected' WHERE service_request_id=$1 AND id<>$2`,
       [bid.service_request_id, bidId]
     );
-
-    // FIX CLAVE: actualizar status Y price con el valor de la bid aceptada
     await client.query(
       `UPDATE service_request
        SET status='accepted', assigned_barber_id=$1, price=$2
        WHERE id=$3`,
       [bid.barber_id, bid.amount, bid.service_request_id]
     );
-
     await client.query("COMMIT");
     return res.json({ ok: true });
   } catch (err) {
@@ -250,6 +242,95 @@ exports.rejectBid = async (req, res) => {
     if (started) await client.query("ROLLBACK").catch(() => {});
     console.error("ERROR REJECT BID:", err);
     return res.status(500).json({ ok: false, error: "Error rechazando oferta" });
+  } finally {
+    client.release();
+  }
+};
+
+// ── NUEVO: Profesional acepta el precio original directamente ────────────────
+// Crea la bid y asigna assigned_barber_id en una sola transaccion atomica
+exports.acceptDirect = async (req, res) => {
+  const client = await pool.connect();
+  let started = false;
+  try {
+    if (!req.user || !PROFESSIONAL_ROLES.includes(req.user.role)) {
+      return res.status(403).json({ ok: false, error: "Solo profesionales pueden aceptar" });
+    }
+
+    const { service_request_id } = req.body;
+    if (!service_request_id) {
+      return res.status(400).json({ ok: false, error: "service_request_id requerido" });
+    }
+
+    await client.query("BEGIN");
+    started = true;
+
+    const proType = roleToProType[req.user.role];
+
+    // Verificar que la solicitud existe, esta abierta y es del tipo correcto
+    const srResult = await client.query(
+      `SELECT id, price, status, professional_type
+       FROM service_request
+       WHERE id=$1 AND status='open' AND professional_type=$2
+       FOR UPDATE`,
+      [service_request_id, proType]
+    );
+
+    if (srResult.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        ok: false,
+        error: "La solicitud no esta disponible o ya fue tomada",
+      });
+    }
+
+    const sr = srResult.rows[0];
+
+    // Verificar que no tiene ya una bid activa de este profesional
+    const existingBid = await client.query(
+      `SELECT id FROM bids WHERE service_request_id=$1 AND barber_id=$2 AND status='pending'`,
+      [service_request_id, req.user.id]
+    );
+    if (existingBid.rowCount > 0) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({ ok: false, error: "Ya tienes una oferta pendiente para esta solicitud" });
+    }
+
+    // 1. Crear bid con precio original y status 'accepted' directamente
+    const bidResult = await client.query(
+      `INSERT INTO bids (service_request_id, barber_id, amount, status)
+       VALUES ($1, $2, $3, 'accepted') RETURNING id`,
+      [service_request_id, req.user.id, sr.price]
+    );
+    const bidId = bidResult.rows[0].id;
+
+    // 2. Rechazar otras bids pendientes de esta solicitud
+    await client.query(
+      `UPDATE bids SET status='rejected'
+       WHERE service_request_id=$1 AND id<>$2`,
+      [service_request_id, bidId]
+    );
+
+    // 3. FIX CLAVE: actualizar status, assigned_barber_id Y price atomicamente
+    await client.query(
+      `UPDATE service_request
+       SET status='accepted', assigned_barber_id=$1, price=$2
+       WHERE id=$3`,
+      [req.user.id, sr.price, service_request_id]
+    );
+
+    await client.query("COMMIT");
+
+    return res.json({
+      ok: true,
+      bid_id: bidId,
+      service_request_id,
+      message: "Servicio aceptado correctamente",
+    });
+  } catch (err) {
+    if (started) await client.query("ROLLBACK").catch(() => {});
+    console.error("ERROR ACCEPT DIRECT:", err);
+    return res.status(500).json({ ok: false, error: "Error aceptando servicio" });
   } finally {
     client.release();
   }
