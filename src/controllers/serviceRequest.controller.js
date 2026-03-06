@@ -94,7 +94,7 @@ exports.getAssignedForBarber = async (req, res) => {
        FROM service_request sr
        LEFT JOIN users u ON u.id = sr.client_id
        WHERE sr.assigned_barber_id = $1
-         AND sr.status IN ('accepted', 'on_route')
+         AND sr.status IN ('accepted', 'on_route', 'arrived')
        ORDER BY sr.requested_at DESC LIMIT 5`,
       [req.user.id]
     );
@@ -130,7 +130,7 @@ exports.updateStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
-    const VALID = ["open", "accepted", "on_route", "completed", "cancelled"];
+    const VALID = ["open", "accepted", "on_route", "arrived", "completed", "cancelled"];
     if (!VALID.includes(status)) {
       return res.status(400).json({ ok: false, error: "Estado invalido" });
     }
@@ -147,7 +147,7 @@ exports.updateStatus = async (req, res) => {
     }
 
     // FIX: Number() evita fallo por comparacion string vs integer
-    if (["on_route", "completed"].includes(status) && Number(sr.assigned_barber_id) !== userId) {
+    if (["on_route", "arrived", "completed"].includes(status) && Number(sr.assigned_barber_id) !== userId) {
       return res.status(403).json({ ok: false, error: "Solo el profesional asignado puede actualizar el estado" });
     }
 
