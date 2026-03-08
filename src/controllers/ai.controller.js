@@ -113,14 +113,14 @@ Los IDs deben ser exactamente los del catálogo.`;
 
     // Enriquecer con info del catálogo
     if (analysis.top_picks) {
-      analysis.top_picks = analysis.top_picks.map((pick: any) => {
+      analysis.top_picks = analysis.top_picks.map((pick) => {
         const catalog = HAIRCUT_CATALOG.find((c) => c.id === pick.id);
         return { ...pick, name: catalog?.name || pick.name };
       });
     }
 
     return res.json({ ok: true, data: analysis });
-  } catch (err: any) {
+  } catch (err) {
     console.error("AI HAIRCUT ERROR:", err);
     if (err?.status === 401) {
       return res.status(500).json({ ok: false, error: "API key de Anthropic inválida" });
