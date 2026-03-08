@@ -1,4 +1,3 @@
-// server.js
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
@@ -9,6 +8,7 @@ const serviceRequestRoutes = require("./src/routes/service-request.routes");
 const bidsRoutes           = require("./src/routes/bids.routes");
 const ratingsRoutes        = require("./src/routes/ratings.routes");
 const paymentsRoutes       = require("./src/routes/payments.routes");
+const aiRoutes             = require("./src/routes/ai.routes");        // NUEVO
 
 const app = express();
 app.use(cors());
@@ -22,8 +22,9 @@ app.use("/api/service-requests", serviceRequestRoutes);
 app.use("/api/bids",             bidsRoutes);
 app.use("/api/ratings",          ratingsRoutes);
 app.use("/api/payments",         paymentsRoutes);
+app.use("/api/ai",               aiRoutes);                            // NUEVO
 
-// ── Compatibilidad sin prefijo /api ───────────────────────────────────────
+// ── Compatibilidad sin prefijo /api ──────────────────────────────────────
 app.use("/auth",             authRoutes);
 app.use("/usuarios",         userRoutes);
 app.use("/service-request",  serviceRequestRoutes);
@@ -31,6 +32,7 @@ app.use("/service-requests", serviceRequestRoutes);
 app.use("/bids",             bidsRoutes);
 app.use("/ratings",          ratingsRoutes);
 app.use("/payments",         paymentsRoutes);
+app.use("/ai",               aiRoutes);                                // NUEVO
 
 app.get("/", (req, res) => {
   res.json({ ok: true, message: "StyleApp API v2 funcionando" });
