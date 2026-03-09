@@ -64,7 +64,7 @@ async function callGemini(image_base64, media_type, catalogText) {
   if (!apiKey) throw new Error("GEMINI_API_KEY no configurada");
 
   // Usar gemini-1.5-flash — modelo gratuito con visión
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-001:generateContent?key=${apiKey}`;
 
   const body = {
     contents: [{
