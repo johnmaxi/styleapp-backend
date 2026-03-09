@@ -1,54 +1,39 @@
 // src/controllers/ai.controller.js
-// Proveedor principal: OpenRouter (gratis con cuenta Gmail)
-// Fallback 1: Google Gemini
-// Fallback 2: Anthropic
+// OpenRouter con router automatico de modelos gratuitos
 
 const HAIRCUT_CATALOG = [
-  { id: "fade_bajo",       name: "Fade Bajo",         desc: "degradado suave desde la nuca" },
-  { id: "fade_medio",      name: "Fade Medio",        desc: "degradado desde la mitad de la cabeza" },
-  { id: "fade_alto",       name: "Fade Alto",         desc: "degradado alto con contraste marcado" },
-  { id: "undercut",        name: "Undercut",          desc: "lados y nuca rapados, volumen arriba" },
-  { id: "pompadour",       name: "Pompadour",         desc: "cabello peinado hacia atrás con volumen frontal" },
-  { id: "texturizado",     name: "Texturizado",       desc: "capas con textura natural y movimiento" },
-  { id: "clasico_lateral", name: "Clasico con Raya",  desc: "raya lateral, formal y elegante" },
-  { id: "buzz_cut",        name: "Buzz Cut",          desc: "corte al ras uniforme muy corto" },
-  { id: "corte_redondo",   name: "Corte Redondo",     desc: "forma redondeada que suaviza rasgos" },
-  { id: "mohawk_suave",    name: "Mohawk Suave",      desc: "tira central con lados degradados" },
-  { id: "flequillo",       name: "Con Flequillo",     desc: "flequillo frontal recto o lateral" },
-  { id: "crop_frances",    name: "Crop Frances",      desc: "flequillo corto con textura superior" },
+  { id: "fade_bajo",       name: "Fade Bajo",        desc: "degradado suave desde la nuca" },
+  { id: "fade_medio",      name: "Fade Medio",       desc: "degradado desde la mitad de la cabeza" },
+  { id: "fade_alto",       name: "Fade Alto",        desc: "degradado alto con contraste marcado" },
+  { id: "undercut",        name: "Undercut",         desc: "lados y nuca rapados, volumen arriba" },
+  { id: "pompadour",       name: "Pompadour",        desc: "cabello peinado hacia atras con volumen frontal" },
+  { id: "texturizado",     name: "Texturizado",      desc: "capas con textura natural y movimiento" },
+  { id: "clasico_lateral", name: "Clasico con Raya", desc: "raya lateral, formal y elegante" },
+  { id: "buzz_cut",        name: "Buzz Cut",         desc: "corte al ras uniforme muy corto" },
+  { id: "corte_redondo",   name: "Corte Redondo",    desc: "forma redondeada que suaviza rasgos" },
+  { id: "mohawk_suave",    name: "Mohawk Suave",     desc: "tira central con lados degradados" },
+  { id: "flequillo",       name: "Con Flequillo",    desc: "flequillo frontal recto o lateral" },
+  { id: "crop_frances",    name: "Crop Frances",     desc: "flequillo corto con textura superior" },
 ];
 
 const buildPrompt = (catalogText) =>
-`Eres un experto estilista y barbero profesional con 20 anos de experiencia.
-Analiza la foto de esta persona y proporciona recomendaciones personalizadas de cortes de cabello.
+`Eres un experto estilista y barbero profesional. Analiza la foto y recomienda cortes de cabello.
 
-CATALOGO DE CORTES DISPONIBLES:
+CATALOGO:
 ${catalogText}
 
-Analiza:
-1. Forma del rostro (oval, redondo, cuadrado, rectangular, corazon, diamante)
-2. Tipo y textura del cabello actual (liso, ondulado, rizado, grueso, fino)
-3. Caracteristicas faciales destacadas
-
-Responde UNICAMENTE en formato JSON con esta estructura exacta, sin texto adicional ni bloques markdown:
+Responde SOLO en JSON sin markdown:
 {
-  "face_shape": "nombre de la forma del rostro",
-  "hair_type": "descripcion del tipo de cabello",
+  "face_shape": "forma del rostro",
+  "hair_type": "tipo de cabello",
   "top_picks": [
-    {
-      "id": "id_del_corte",
-      "name": "nombre del corte",
-      "score": 95,
-      "reason": "explicacion personalizada de por que este corte le favorece (2-3 oraciones)",
-      "tips": "consejo de mantenimiento o estilo especifico para esta persona"
-    }
+    {"id": "id_corte", "name": "nombre", "score": 95, "reason": "por que le favorece", "tips": "consejo"}
   ],
-  "avoid": ["corte que NO le favorece con razon breve"],
-  "general_advice": "consejo general personalizado de 2-3 oraciones sobre su cabello"
+  "avoid": ["corte que no le favorece"],
+  "general_advice": "consejo general"
 }
 
-Incluye exactamente 4 cortes en top_picks, ordenados de mayor a menor recomendacion (score 0-100).
-Los IDs deben ser exactamente los del catalogo.`;
+Exactamente 4 cortes en top_picks. IDs exactos del catalogo.`;
 
 function extractJSON(text) {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
@@ -58,18 +43,24 @@ function extractJSON(text) {
   return JSON.parse(text);
 }
 
+// ── OpenRouter — usa router automatico de modelos gratis con vision ────────
 async function callOpenRouter(image_base64, media_type, catalogText) {
   const apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) throw new Error("OPENROUTER_API_KEY no configurada");
 
+  // Modelos gratuitos con vision disponibles en marzo 2026
+  // openrouter/free selecciona automaticamente el mejor disponible
   const models = [
-    "meta-llama/llama-3.2-11b-vision-instruct:free",
-    "qwen/qwen-2-vl-7b-instruct:free",
+    "openrouter/free",                              // router automatico (elige el mejor gratis con vision)
+    "google/gemma-3-12b-it:free",                   // Gemma 3 con vision, gratuito
+    "google/gemma-3-27b-it:free",                   // Gemma 3 27B con vision
+    "mistralai/mistral-small-3.1-24b-instruct:free",// Mistral con vision
   ];
 
   let lastError;
   for (const model of models) {
     try {
+      console.log(`AI: intentando OpenRouter modelo ${model}`);
       const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -91,16 +82,15 @@ async function callOpenRouter(image_base64, media_type, catalogText) {
         }),
       });
 
-      if (!response.ok) {
-        const errBody = await response.text();
-        throw new Error(`OpenRouter ${model} error ${response.status}: ${errBody}`);
+      const data = await response.json();
+
+      if (!response.ok || data.error) {
+        const msg = data.error?.message || `HTTP ${response.status}`;
+        throw new Error(`OpenRouter ${model}: ${msg}`);
       }
 
-      const data = await response.json();
-      if (data.error) throw new Error(`OpenRouter error: ${JSON.stringify(data.error)}`);
-
       const text = data.choices?.[0]?.message?.content;
-      if (!text) throw new Error(`OpenRouter sin texto (model: ${model})`);
+      if (!text) throw new Error(`OpenRouter ${model} sin texto en respuesta`);
 
       console.log(`AI: OpenRouter OK con ${model}`);
       return text;
@@ -109,9 +99,10 @@ async function callOpenRouter(image_base64, media_type, catalogText) {
       lastError = err;
     }
   }
-  throw lastError;
+  throw lastError || new Error("Todos los modelos OpenRouter fallaron");
 }
 
+// ── Gemini fallback ────────────────────────────────────────────────────────
 async function callGemini(image_base64, media_type, catalogText) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY no configurada");
@@ -129,8 +120,8 @@ async function callGemini(image_base64, media_type, catalogText) {
     }),
   });
   if (!response.ok) {
-    const errBody = await response.text();
-    throw new Error(`Gemini error ${response.status}: ${errBody}`);
+    const err = await response.text();
+    throw new Error(`Gemini error ${response.status}: ${err}`);
   }
   const data = await response.json();
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -138,6 +129,7 @@ async function callGemini(image_base64, media_type, catalogText) {
   return text;
 }
 
+// ── Anthropic fallback ─────────────────────────────────────────────────────
 async function callAnthropic(image_base64, media_type, catalogText) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY no configurada");
@@ -154,16 +146,16 @@ async function callAnthropic(image_base64, media_type, catalogText) {
   return response.content[0]?.text || "";
 }
 
+// ── Controller ─────────────────────────────────────────────────────────────
 exports.analyzHaircut = async (req, res) => {
   try {
     const { image_base64, media_type = "image/jpeg" } = req.body;
 
-    if (!image_base64) {
+    if (!image_base64)
       return res.status(400).json({ ok: false, error: "Se requiere la imagen en base64" });
-    }
-    if (image_base64.length > 7_000_000) {
+
+    if (image_base64.length > 7_000_000)
       return res.status(400).json({ ok: false, error: "Imagen demasiado grande. Usa foto menor a 5MB" });
-    }
 
     const catalogText = HAIRCUT_CATALOG.map((c, i) => `${i + 1}. ${c.name}: ${c.desc}`).join("\n");
 
@@ -172,19 +164,18 @@ exports.analyzHaircut = async (req, res) => {
     if (process.env.GEMINI_API_KEY)     providers.push({ name: "gemini",     fn: callGemini     });
     if (process.env.ANTHROPIC_API_KEY)  providers.push({ name: "anthropic",  fn: callAnthropic  });
 
-    if (providers.length === 0) {
+    if (providers.length === 0)
       return res.status(500).json({ ok: false, error: "No hay proveedor de IA configurado" });
-    }
 
     let rawText, providerUsed, lastError;
 
-    for (const provider of providers) {
+    for (const p of providers) {
       try {
-        rawText = await provider.fn(image_base64, media_type, catalogText);
-        providerUsed = provider.name;
+        rawText = await p.fn(image_base64, media_type, catalogText);
+        providerUsed = p.name;
         break;
       } catch (err) {
-        console.warn(`${provider.name} fallo:`, err.message);
+        console.warn(`${p.name} fallo:`, err.message);
         lastError = err;
       }
     }
@@ -197,15 +188,15 @@ exports.analyzHaircut = async (req, res) => {
     let analysis;
     try {
       analysis = extractJSON(rawText);
-    } catch (parseErr) {
-      console.error("JSON parse error:", parseErr.message, "Raw:", rawText.substring(0, 200));
+    } catch (e) {
+      console.error("JSON parse error:", e.message, "| Raw:", rawText.substring(0, 300));
       return res.status(500).json({ ok: false, error: "No se pudo procesar el analisis. Intenta con otra foto." });
     }
 
     if (analysis.top_picks) {
       analysis.top_picks = analysis.top_picks.map((pick) => {
-        const catalog = HAIRCUT_CATALOG.find((c) => c.id === pick.id);
-        return { ...pick, name: catalog?.name || pick.name };
+        const cat = HAIRCUT_CATALOG.find((c) => c.id === pick.id);
+        return { ...pick, name: cat?.name || pick.name };
       });
     }
 
