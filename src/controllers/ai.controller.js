@@ -200,6 +200,24 @@ exports.analyzHaircut = async (req, res) => {
       });
     }
 
+    // Limpiar "avoid" — modelos free a veces retornan numeros en vez de texto
+    if (analysis.avoid && Array.isArray(analysis.avoid)) {
+      analysis.avoid = analysis.avoid.map((item) => {
+        const num = parseInt(item, 10);
+        if (!isNaN(num) && num >= 1 && num <= HAIRCUT_CATALOG.length) {
+          const cat = HAIRCUT_CATALOG[num - 1];
+          return cat.name + ": no complementa bien tu forma de rostro";
+        }
+        const byId = HAIRCUT_CATALOG.find((c) => c.id === String(item));
+        if (byId) return byId.name + ": no complementa bien tu forma de rostro";
+        return typeof item === "string" && item.length > 3 ? item : null;
+      }).filter(Boolean);
+
+      if (analysis.avoid.length === 0) {
+        analysis.avoid = ["Cortes con mucho volumen lateral si tienes rostro redondo o cuadrado"];
+      }
+    }
+
     return res.json({ ok: true, data: analysis, provider: providerUsed });
 
   } catch (err) {
