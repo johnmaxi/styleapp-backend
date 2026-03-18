@@ -121,21 +121,21 @@ exports.finalizeService = async (req, res) => {
         });
       }
 
-      // Profesional confirmó — descontar 15% del saldo del cliente (comisión app)
-      const balRes = await client.query(`SELECT balance FROM users WHERE id=$1 FOR UPDATE`, [client_id]);
-      const clientBalance = Number(balRes.rows[0]?.balance || 0);
+      // Profesional confirmó — descontar 15% del saldo del PROFESIONAL (comisión app)
+      const profBalRes = await client.query(`SELECT balance FROM users WHERE id=$1 FOR UPDATE`, [professional_id]);
+      const profBalance = Number(profBalRes.rows[0]?.balance || 0);
 
-      if (clientBalance >= commission_amt) {
-        // Descontar comisión del saldo del cliente
+      if (profBalance >= commission_amt) {
+        // Descontar comisión del saldo del profesional
         await client.query(
           `UPDATE users SET balance = balance - $1 WHERE id=$2`,
-          [commission_amt, client_id]
+          [commission_amt, professional_id]
         );
       }
       // Si no tiene saldo suficiente para la comisión, se registra como deuda (nota)
-      const notes = clientBalance < commission_amt
-        ? `Cliente sin saldo para comision. Deuda: $${commission_amt}`
-        : `Comision descontada de saldo cliente`;
+      const notes = profBalance < commission_amt
+        ? `Profesional sin saldo para comision. Deuda: $${commission_amt}`
+        : `Comision descontada de saldo profesional`;
 
       await registerCommission(client, {
         service_id, professional_id, client_id, total_service: total,
