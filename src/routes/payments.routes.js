@@ -1,19 +1,21 @@
 // src/routes/payments.routes.js
-const express = require("express");
-const router  = express.Router();
-const auth    = require("../middleware/auth.middleware");
-const ctrl    = require("../controllers/payments.controller");
+const express  = require("express");
+const router   = express.Router();
+const auth     = require("../middleware/auth.middleware");
 
-// Crear preferencia MP (requiere auth)
-router.post("/mp-preference", auth, ctrl.createMPPreference);
+const paymentsCtrl    = require("../controllers/payments.controller");
+const svcPaymentsCtrl = require("../controllers/service-payments.controller"); // NUEVO
 
-// Resultado de pago — MercadoPago redirige aqui (sin auth, es redirect del browser)
-router.get("/mp-result", ctrl.mpResult);
+// ── Recargas de saldo (MercadoPago) ──────────────────────────────────────
+router.post("/mp-preference",   auth, paymentsCtrl.createMPPreference);
+router.get( "/mp-result",             paymentsCtrl.mpResult);
+router.post("/mp-webhook",            paymentsCtrl.mpWebhook);
+router.get( "/balance",         auth, paymentsCtrl.getBalance);
 
-// Webhook MP (sin auth)
-router.post("/mp-webhook", ctrl.mpWebhook);
-
-// Saldo del usuario
-router.get("/balance", auth, ctrl.getBalance);
+// ── Pagos de servicios con lógica de comisiones ───────────────────────────
+router.post("/finalize-service/:service_id", auth, svcPaymentsCtrl.finalizeService);
+router.get( "/check-balance/:service_id",    auth, svcPaymentsCtrl.checkClientBalance);
+router.post("/service-payment/:service_id",  auth, svcPaymentsCtrl.createServicePayment);
+router.get( "/service-result",                     svcPaymentsCtrl.servicePaymentResult);
 
 module.exports = router;
