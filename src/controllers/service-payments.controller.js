@@ -183,17 +183,60 @@ exports.finalizeService = async (req, res) => {
       }
     }
 
-    // ── PSE (retenido en app — Opción 1) ─────────────────────────────────
+    // ── PSE ───────────────────────────────────────────────────────────────
     else if (payment_method === "pse") {
-      // El dinero ya fue retenido en la app vía MercadoPago
-      // Al finalizar, liberar 85% al profesional
-      await client.query(`UPDATE users SET balance = balance + $1 WHERE id=$2`, [professional_amt, professional_id]);
+      const balRes = await client.query(`SELECT balance FROM users WHERE id=$1 FOR UPDATE`, [client_id]);
+      const clientBalance = Number(balRes.rows[0]?.balance || 0);
 
-      await registerCommission(client, {
-        service_id, professional_id, client_id, total_service: total,
-        payment_method: "pse", payment_status: "completed",
-        notes: "Liberado desde retención MP al finalizar servicio",
-      });
+      if (clientBalance >= total) {
+        // Opción 1: cliente tiene saldo suficiente — descontar directo
+        await client.query(`UPDATE users SET balance = balance - $1 WHERE id=$2`, [total, client_id]);
+        await client.query(`UPDATE users SET balance = balance + $1 WHERE id=$2`, [professional_amt, professional_id]);
+
+        await registerCommission(client, {
+          service_id, professional_id, client_id, total_service: total,
+          payment_method: "pse", payment_status: "completed",
+          notes: "Pagado desde saldo cliente (PSE)",
+        });
+
+      } else if (clientBalance >= commission_amt) {
+        // Opción parcial: descontar comisión del saldo, resto ya fue pagado por MP
+        await client.query(`UPDATE users SET balance = balance - $1 WHERE id=$2`, [commission_amt, client_id]);
+        await client.query(`UPDATE users SET balance = balance + $1 WHERE id=$2`, [professional_amt, professional_id]);
+
+        await registerCommission(client, {
+          service_id, professional_id, client_id, total_service: total,
+          payment_method: "pse", payment_status: "completed",
+          notes: `Comision de saldo + MP retención. Saldo cliente: $${clientBalance}`,
+        });
+
+      } else {
+        // Opción 2: dinero retenido en app via MercadoPago — liberar al profesional
+        // (el payment_status del servicio debe ser 'paid' para llegar aquí)
+        const srCheck = await client.query(
+          `SELECT payment_status FROM service_request WHERE id=$1`, [service_id]
+        );
+        const payStatus = srCheck.rows[0]?.payment_status;
+
+        if (payStatus === "paid") {
+          await client.query(`UPDATE users SET balance = balance + $1 WHERE id=$2`, [professional_amt, professional_id]);
+          await registerCommission(client, {
+            service_id, professional_id, client_id, total_service: total,
+            payment_method: "pse", payment_status: "completed",
+            notes: "Liberado desde retención MP al finalizar servicio",
+          });
+        } else {
+          // No hay saldo ni retención MP — bloquear
+          await client.query("ROLLBACK");
+          return res.status(400).json({
+            ok: false,
+            blocked: true,
+            error: "Saldo insuficiente. El cliente debe recargar o pagar por MercadoPago.",
+            client_balance: clientBalance,
+            required: total,
+          });
+        }
+      }
     }
 
     // ── NEQUI ─────────────────────────────────────────────────────────────
