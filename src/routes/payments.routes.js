@@ -1,19 +1,19 @@
 // src/routes/payments.routes.js
 const express = require("express");
-const router = express.Router();
-const auth = require("../middleware/auth.middleware");
-const controller = require("../controllers/payments.controller");
+const router  = express.Router();
+const auth    = require("../middleware/auth.middleware");
+const ctrl    = require("../controllers/payments.controller");
 
-// Generar link de pago Wompi
-router.post("/wompi-link", auth, controller.createWompiLink);
+// Crear preferencia MP (requiere auth)
+router.post("/mp-preference", auth, ctrl.createMPPreference);
 
-// Resultado de pago — Wompi redirige aqui (no requiere auth)
-router.get("/result", controller.paymentResult);
+// Resultado de pago — MercadoPago redirige aqui (sin auth, es redirect del browser)
+router.get("/mp-result", ctrl.mpResult);
 
-// Webhook de Wompi (no requiere auth)
-router.post("/wompi-webhook", controller.wompiWebhook);
+// Webhook MP (sin auth)
+router.post("/mp-webhook", ctrl.mpWebhook);
 
-// Consultar saldo
-router.get("/balance", auth, controller.getBalance);
+// Saldo del usuario
+router.get("/balance", auth, ctrl.getBalance);
 
 module.exports = router;

@@ -1,38 +1,74 @@
 // src/controllers/payments.controller.js
 const pool = require("../db/db");
-const crypto = require("crypto");
 
-exports.createWompiLink = async (req, res) => {
+// ── Crear preferencia de MercadoPago (Checkout Pro) ───────────────────────
+exports.createMPPreference = async (req, res) => {
   try {
     if (!req.user) {
       return res.status(401).json({ ok: false, error: "No autorizado" });
     }
 
     const { amount_in_cents } = req.body;
+    const amount = Number(amount_in_cents);
 
-    if (!amount_in_cents || Number(amount_in_cents) < 100000) {
+    if (!amount || amount < 100000) {
       return res.status(400).json({ ok: false, error: "Monto minimo: $1.000 COP" });
     }
-    if (Number(amount_in_cents) > 500000000) {
+    if (amount > 500000000) {
       return res.status(400).json({ ok: false, error: "Monto maximo: $5.000.000 COP" });
     }
 
-    const integritySecret = process.env.WOMPI_INTEGRITY_SECRET;
-    if (!integritySecret) {
-      console.error("WOMPI_INTEGRITY_SECRET no configurado en variables de entorno");
+    const accessToken = process.env.MP_ACCESS_TOKEN;
+    if (!accessToken) {
       return res.status(500).json({ ok: false, error: "Pasarela de pagos no configurada" });
     }
 
-    // Referencia unica
-    const reference = `STYLE-${req.user.id}-${Date.now()}`;
-    const amountCents = Number(amount_in_cents);
+    const amountCOP   = amount / 100;           // convertir centavos a pesos
+    const reference   = `STYLE-${req.user.id}-${Date.now()}`;
+    const backendUrl  = process.env.BACKEND_URL || "https://styleapp-backend-production.up.railway.app";
 
-    // Firma SHA256: reference + amount_in_cents + "COP" + integrity_secret
-    const stringToHash = `${reference}${amountCents}COP${integritySecret}`;
-    const integrity_signature = crypto
-      .createHash("sha256")
-      .update(stringToHash)
-      .digest("hex");
+    const preference = {
+      items: [{
+        id:          "recarga-saldo",
+        title:       "Recarga de saldo StyleApp",
+        description: `Recarga de $${amountCOP.toLocaleString("es-CO")} COP`,
+        quantity:    1,
+        currency_id: "COP",
+        unit_price:  amountCOP,
+      }],
+      payer: {
+        email: req.user.email || "cliente@styleapp.co",
+        name:  req.user.name  || "Cliente StyleApp",
+      },
+      external_reference: reference,
+      back_urls: {
+        success: `${backendUrl}/payments/mp-result?status=success&ref=${reference}`,
+        failure: `${backendUrl}/payments/mp-result?status=failure&ref=${reference}`,
+        pending: `${backendUrl}/payments/mp-result?status=pending&ref=${reference}`,
+      },
+      auto_return:         "approved",
+      notification_url:    `${backendUrl}/payments/mp-webhook`,
+      statement_descriptor: "STYLEAPP",
+      expires:             false,
+    };
+
+    // Crear preferencia en MercadoPago
+    const mpRes = await fetch("https://api.mercadopago.com/checkout/preferences", {
+      method:  "POST",
+      headers: {
+        "Authorization": `Bearer ${accessToken}`,
+        "Content-Type":  "application/json",
+      },
+      body: JSON.stringify(preference),
+    });
+
+    if (!mpRes.ok) {
+      const errBody = await mpRes.text();
+      console.error("MP preference error:", errBody);
+      return res.status(500).json({ ok: false, error: "Error creando preferencia de pago" });
+    }
+
+    const mpData = await mpRes.json();
 
     // Guardar transaccion pendiente
     try {
@@ -40,134 +76,126 @@ exports.createWompiLink = async (req, res) => {
         `INSERT INTO transactions (user_id, reference, amount_in_cents, status, created_at)
          VALUES ($1, $2, $3, 'pending', NOW())
          ON CONFLICT (reference) DO NOTHING`,
-        [req.user.id, reference, amountCents]
+        [req.user.id, reference, amount]
       );
     } catch (dbErr) {
-      // Si la tabla no existe aun, solo loguear — no bloquear el pago
-      console.warn("No se pudo guardar transaccion (tabla puede no existir):", dbErr.message);
+      console.warn("No se pudo guardar transaccion:", dbErr.message);
     }
-
-    const redirect_url = `https://styleapp-backend-production.up.railway.app/payments/result`;
 
     return res.json({
-      ok: true,
+      ok:          true,
+      checkout_url: mpData.init_point,       // URL produccion
+      sandbox_url:  mpData.sandbox_init_point, // URL pruebas
+      preference_id: mpData.id,
       reference,
-      integrity_signature,
-      redirect_url,
-      amount_in_cents: amountCents,
     });
+
   } catch (err) {
-    console.error("WOMPI LINK ERROR:", err);
-    return res.status(500).json({ ok: false, error: "Error generando link de pago: " + err.message });
+    console.error("MP PREFERENCE ERROR:", err);
+    return res.status(500).json({ ok: false, error: "Error generando pago: " + err.message });
   }
 };
 
-// Resultado de pago — Wompi redirige aqui despues del pago
-exports.paymentResult = async (req, res) => {
-  try {
-    const { id: transactionId } = req.query;
-    if (!transactionId) {
-      return res.send("<h2>Pago procesado. Vuelve a la app Style para ver tu saldo.</h2>");
-    }
+// ── Resultado de pago — MercadoPago redirige aqui ─────────────────────────
+exports.mpResult = async (req, res) => {
+  const { status, ref, payment_id, collection_status } = req.query;
 
-    // Consultar estado a Wompi directamente
-    const wompiRes = await fetch(
-      `https://production.wompi.co/v1/transactions/${transactionId}`,
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.WOMPI_PRIVATE_KEY}`,
-        },
-      }
-    );
-    const wompiData = await wompiRes.json();
-    const transaction = wompiData?.data;
+  const finalStatus = status || collection_status;
 
-    if (transaction?.status === "APPROVED") {
-      const reference = transaction.reference;
-      const amountCents = transaction.amount_in_cents;
-
-      // Acreditar saldo
+  if (finalStatus === "success" || finalStatus === "approved") {
+    // Acreditar saldo si hay referencia
+    if (ref) {
       try {
         await pool.query(
-          `UPDATE users SET balance = COALESCE(balance, 0) + $1
-           WHERE id = (SELECT user_id FROM transactions WHERE reference=$2 LIMIT 1)`,
-          [amountCents / 100, reference]
+          `UPDATE users
+           SET balance = COALESCE(balance, 0) + (
+             SELECT amount_in_cents::numeric / 100
+             FROM transactions WHERE reference = $1 LIMIT 1
+           )
+           WHERE id = (SELECT user_id FROM transactions WHERE reference = $1 LIMIT 1)`,
+          [ref]
         );
         await pool.query(
-          `UPDATE transactions SET status='approved', wompi_id=$1, updated_at=NOW()
-           WHERE reference=$2`,
-          [transaction.id, reference]
+          `UPDATE transactions SET status='approved', updated_at=NOW() WHERE reference=$1`,
+          [ref]
         );
       } catch (dbErr) {
-        console.warn("Error actualizando saldo:", dbErr.message);
+        console.warn("Error acreditando saldo:", dbErr.message);
       }
-
-      return res.send(`
-        <html><body style="font-family:sans-serif;text-align:center;padding:40px;background:#0d0d0d;color:#fff">
-          <h2 style="color:#4caf50">Pago aprobado</h2>
-          <p>Tu saldo fue recargado exitosamente.</p>
-          <p style="color:#888">Vuelve a la app Style para continuar.</p>
-        </body></html>
-      `);
-    } else {
-      return res.send(`
-        <html><body style="font-family:sans-serif;text-align:center;padding:40px;background:#0d0d0d;color:#fff">
-          <h2 style="color:#D4AF37">Pago pendiente</h2>
-          <p>El estado de tu pago es: ${transaction?.status || "desconocido"}</p>
-          <p style="color:#888">Vuelve a la app Style para verificar tu saldo.</p>
-        </body></html>
-      `);
     }
-  } catch (err) {
-    console.error("PAYMENT RESULT ERROR:", err);
-    return res.send("<h2>Vuelve a la app Style para verificar tu saldo.</h2>");
+
+    return res.send(`
+      <html><body style="font-family:sans-serif;text-align:center;padding:40px;background:#0d0d0d;color:#fff">
+        <h2 style="color:#4caf50">✅ Pago aprobado</h2>
+        <p>Tu saldo fue recargado exitosamente.</p>
+        <p style="color:#888;font-size:14px">Vuelve a la app StyleApp para continuar.</p>
+        <p style="color:#555;font-size:12px;margin-top:24px">Referencia: ${ref || "-"}</p>
+      </body></html>
+    `);
   }
+
+  if (finalStatus === "pending") {
+    return res.send(`
+      <html><body style="font-family:sans-serif;text-align:center;padding:40px;background:#0d0d0d;color:#fff">
+        <h2 style="color:#D4AF37">⏳ Pago pendiente</h2>
+        <p>Tu pago esta siendo procesado.</p>
+        <p style="color:#888;font-size:14px">Vuelve a la app StyleApp para verificar tu saldo en unos minutos.</p>
+      </body></html>
+    `);
+  }
+
+  return res.send(`
+    <html><body style="font-family:sans-serif;text-align:center;padding:40px;background:#0d0d0d;color:#fff">
+      <h2 style="color:#e53935">❌ Pago no completado</h2>
+      <p>El pago no fue procesado. Puedes intentarlo de nuevo desde la app.</p>
+      <p style="color:#888;font-size:14px">Vuelve a la app StyleApp.</p>
+    </body></html>
+  `);
 };
 
-// Webhook de Wompi
-exports.wompiWebhook = async (req, res) => {
+// ── Webhook de MercadoPago ────────────────────────────────────────────────
+exports.mpWebhook = async (req, res) => {
   try {
-    const { event, data, timestamp } = req.body;
-    const eventsSecret = process.env.WOMPI_EVENTS_SECRET;
+    const { type, data } = req.body;
 
-    if (eventsSecret) {
-      const checksum = req.headers["x-event-checksum"];
-      const stringToHash = `${data?.transaction?.id}${timestamp}${event}${eventsSecret}`;
-      const expected = crypto.createHash("sha256").update(stringToHash).digest("hex");
-      if (checksum && checksum !== expected) {
-        console.error("WOMPI WEBHOOK: firma invalida");
-        return res.status(401).json({ ok: false });
-      }
-    }
+    if (type === "payment" && data?.id) {
+      const accessToken = process.env.MP_ACCESS_TOKEN;
 
-    if (event === "transaction.updated") {
-      const transaction = data?.transaction;
-      if (!transaction) return res.json({ ok: true });
-      const { reference, status, amount_in_cents } = transaction;
+      // Consultar el pago a MP
+      const mpRes = await fetch(`https://api.mercadopago.com/v1/payments/${data.id}`, {
+        headers: { "Authorization": `Bearer ${accessToken}` },
+      });
+      const payment = await mpRes.json();
 
-      if (status === "APPROVED") {
+      if (payment.status === "approved") {
+        const reference = payment.external_reference;
+        const amount    = payment.transaction_amount;
+
         try {
           await pool.query(
-            `UPDATE transactions SET status='approved', wompi_id=$1, updated_at=NOW() WHERE reference=$2`,
-            [transaction.id, reference]
+            `UPDATE transactions SET status='approved', updated_at=NOW() WHERE reference=$1`,
+            [reference]
           );
           await pool.query(
             `UPDATE users SET balance = COALESCE(balance, 0) + $1
              WHERE id = (SELECT user_id FROM transactions WHERE reference=$2 LIMIT 1)`,
-            [amount_in_cents / 100, reference]
+            [amount, reference]
           );
+          console.log(`MP Webhook: pago aprobado ref=${reference} amount=${amount}`);
         } catch (dbErr) {
-          console.warn("Webhook: error actualizando DB:", dbErr.message);
+          console.warn("Webhook MP: error DB:", dbErr.message);
         }
       }
     }
+
     return res.json({ ok: true });
   } catch (err) {
-    console.error("WOMPI WEBHOOK ERROR:", err);
+    console.error("MP WEBHOOK ERROR:", err);
     return res.status(500).json({ ok: false });
   }
 };
 
+// ── Obtener saldo ─────────────────────────────────────────────────────────
 exports.getBalance = async (req, res) => {
   try {
     if (!req.user) return res.status(401).json({ ok: false });
