@@ -13,16 +13,46 @@ exports.create = async (req, res) => {
     if (!req.user || req.user.role !== "client") {
       return res.status(403).json({ ok: false, error: "Solo clientes pueden crear solicitudes" });
     }
-    const { service_type, address, latitude, longitude, price, professional_type, payment_method } = req.body;
+    const { service_type, address, latitude, longitude, price,
+            professional_type, payment_method, mp_reference } = req.body;
+
     if (!service_type || !address || !price) {
       return res.status(400).json({ ok: false, error: "Faltan campos obligatorios" });
     }
+
+    // PSE/Tarjeta: verificar que el pago MP fue aprobado antes de crear
+    const MP_METHODS = ["pse", "tarjeta"];
+    let payment_status = "pending";
+
+    if (MP_METHODS.includes(payment_method)) {
+      if (!mp_reference) {
+        return res.status(400).json({
+          ok: false,
+          error: "Para PSE/Tarjeta debes completar el pago por MercadoPago primero"
+        });
+      }
+      // Verificar que la referencia existe y está aprobada
+      const txRes = await pool.query(
+        `SELECT status FROM transactions WHERE reference = $1 AND user_id = $2`,
+        [mp_reference, req.user.id]
+      );
+      const tx = txRes.rows[0];
+      if (!tx || tx.status !== "approved") {
+        return res.status(400).json({
+          ok: false,
+          error: "El pago no fue confirmado. Completa el pago en MercadoPago antes de publicar."
+        });
+      }
+      payment_status = "paid";
+    }
+
     const result = await pool.query(
       `INSERT INTO service_request
-       (client_id, service_type, address, latitude, longitude, price, professional_type, payment_method, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'open') RETURNING *`,
+       (client_id, service_type, address, latitude, longitude, price,
+        professional_type, payment_method, payment_status, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'open') RETURNING *`,
       [req.user.id, service_type, address, latitude || null, longitude || null,
-       price, professional_type || null, payment_method || null]
+       price, professional_type || null, payment_method || null, payment_status]
     );
     return res.status(201).json({ ok: true, data: result.rows[0] });
   } catch (err) {
