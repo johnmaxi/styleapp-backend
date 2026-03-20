@@ -198,10 +198,15 @@ exports.servicePaymentResult = async (req, res) => {
       <h2>${title}</h2>
       <p>${msg}</p>
       <p style="color:#555;font-size:12px">Ref: ${ref || "-"}</p>
-      <button class="btn" onclick="window.close()">Volver a la app</button>
+      <button class="btn" onclick="location.href='styleapp://payment-result?status=${isSuccess ? 'success' : 'pending'}&ref=${ref || ''}'; setTimeout(()=>window.close(),500);">
+        Volver a la app ✓
+      </button>
       <script>
-        // Intentar cerrar automáticamente después de 2 segundos
-        setTimeout(function() { window.close(); }, 2000);
+        // Intentar redirigir a la app automáticamente
+        setTimeout(function() {
+          location.href = 'styleapp://payment-result?status=${isSuccess ? "success" : "pending"}&ref=${ref || ""}';
+          setTimeout(function() { window.close(); }, 500);
+        }, 1500);
       </script>
     </body>
     </html>
@@ -283,23 +288,31 @@ exports.finalizeService = async (req, res) => {
       });
     }
 
-    // ── PSE / TARJETA — ya pagaron por MP, distribuir ─────────────────────
+    // ── PSE / TARJETA — dinero cobrado por MP, solo distribuir ─────────────
     else if (payment_method === "pse" || payment_method === "tarjeta") {
-      // El dinero ya fue cobrado por MP — verificar que payment_status = paid
+      // IMPORTANTE: NO tocar el saldo del cliente — MP ya cobró directamente
+      // Solo acreditar 85% al profesional, 15% queda en la app
+
+      // Verificar que el pago fue confirmado
       if (service.payment_status !== "paid") {
-        // Intentar verificar con la referencia MP si existe
         await client.query("ROLLBACK");
         return res.status(400).json({
           ok: false, blocked: true,
           error: "El pago del servicio no está confirmado. Contacta al soporte.",
         });
       }
-      // Acreditar 85% al profesional
-      await client.query(`UPDATE users SET balance = balance + $1 WHERE id=$2`, [professional_amt, professional_id]);
+
+      // Acreditar SOLO el 85% al profesional — NO modificar saldo del cliente
+      await client.query(
+        `UPDATE users SET balance = balance + $1 WHERE id = $2`,
+        [professional_amt, professional_id]
+      );
+
       await registerCommission(client, {
-        service_id, professional_id, client_id, total_service: total,
+        service_id, professional_id, client_id,
+        total_service:  total,
         payment_method, payment_status: "completed",
-        notes: `Pago MP confirmado. Liberado $${professional_amt} al profesional.`,
+        notes: `MP cobró $${total} directamente. Liberado $${professional_amt} (85%) al profesional. Comisión app: $${commission_amt} (15%).`,
       });
     }
 
