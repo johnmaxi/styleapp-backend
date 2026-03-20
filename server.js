@@ -53,4 +53,12 @@ app.use((err, req, res, next) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Backend corriendo en http://localhost:${PORT}`);
+
+  // Iniciar job de expiración de servicios
+  try {
+    const { startExpiryJob } = require("./src/jobs/serviceExpiry");
+    startExpiryJob();
+  } catch (e) {
+    console.warn("No se pudo iniciar serviceExpiry job:", e.message);
+  }
 });
