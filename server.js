@@ -1,6 +1,6 @@
 require("dotenv").config();
 const express = require("express");
-const cors = require("cors");
+const cors    = require("cors");
 
 const authRoutes           = require("./src/routes/auth.routes");
 const userRoutes           = require("./src/routes/user.routes");
@@ -8,21 +8,23 @@ const serviceRequestRoutes = require("./src/routes/service-request.routes");
 const bidsRoutes           = require("./src/routes/bids.routes");
 const ratingsRoutes        = require("./src/routes/ratings.routes");
 const paymentsRoutes       = require("./src/routes/payments.routes");
-const aiRoutes             = require("./src/routes/ai.routes");        // NUEVO
+const aiRoutes             = require("./src/routes/ai.routes");
+const notifRoutes          = require("./src/routes/notifications.routes"); // NUEVO
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: "25mb" }));
 app.use(express.urlencoded({ extended: true, limit: "25mb" }));
 
-// ── Rutas con prefijo /api/ ────────────────────────────────────────────────
+// ── Rutas con prefijo /api/ ───────────────────────────────────────────────
 app.use("/api/auth",             authRoutes);
 app.use("/api/usuarios",         userRoutes);
 app.use("/api/service-requests", serviceRequestRoutes);
 app.use("/api/bids",             bidsRoutes);
 app.use("/api/ratings",          ratingsRoutes);
 app.use("/api/payments",         paymentsRoutes);
-app.use("/api/ai",               aiRoutes);                            // NUEVO
+app.use("/api/ai",               aiRoutes);
+app.use("/api/notifications",    notifRoutes); // NUEVO
 
 // ── Compatibilidad sin prefijo /api ──────────────────────────────────────
 app.use("/auth",             authRoutes);
@@ -32,7 +34,8 @@ app.use("/service-requests", serviceRequestRoutes);
 app.use("/bids",             bidsRoutes);
 app.use("/ratings",          ratingsRoutes);
 app.use("/payments",         paymentsRoutes);
-app.use("/ai",               aiRoutes);                                // NUEVO
+app.use("/ai",               aiRoutes);
+app.use("/notifications",    notifRoutes); // NUEVO
 
 app.get("/", (req, res) => {
   res.json({ ok: true, message: "StyleApp API v2 funcionando" });

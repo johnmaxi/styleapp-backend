@@ -13,14 +13,16 @@ exports.create = async (req, res) => {
     if (!req.user || req.user.role !== "client") {
       return res.status(403).json({ ok: false, error: "Solo clientes pueden crear solicitudes" });
     }
-    const { service_type, address, latitude, longitude, price,
-            professional_type, payment_method, mp_reference } = req.body;
+    const {
+      service_type, address, latitude, longitude,
+      price, professional_type, payment_method, mp_reference,
+    } = req.body;
 
     if (!service_type || !address || !price) {
       return res.status(400).json({ ok: false, error: "Faltan campos obligatorios" });
     }
 
-    // PSE/Tarjeta: verificar que el pago MP fue aprobado antes de crear
+    // PSE/Tarjeta: verificar pago anticipado
     const MP_METHODS = ["pse", "tarjeta"];
     let payment_status = "pending";
 
@@ -28,10 +30,9 @@ exports.create = async (req, res) => {
       if (!mp_reference) {
         return res.status(400).json({
           ok: false,
-          error: "Para PSE/Tarjeta debes completar el pago por MercadoPago primero"
+          error: "Para PSE/Tarjeta debes completar el pago por MercadoPago primero",
         });
       }
-      // Verificar que la referencia existe y está aprobada
       const txRes = await pool.query(
         `SELECT status FROM transactions WHERE reference = $1 AND user_id = $2`,
         [mp_reference, req.user.id]
@@ -40,7 +41,7 @@ exports.create = async (req, res) => {
       if (!tx || tx.status !== "approved") {
         return res.status(400).json({
           ok: false,
-          error: "El pago no fue confirmado. Completa el pago en MercadoPago antes de publicar."
+          error: "El pago no fue confirmado. Completa el pago en MercadoPago antes de publicar.",
         });
       }
       payment_status = "paid";
@@ -51,10 +52,27 @@ exports.create = async (req, res) => {
        (client_id, service_type, address, latitude, longitude, price,
         professional_type, payment_method, payment_status, status)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'open') RETURNING *`,
-      [req.user.id, service_type, address, latitude || null, longitude || null,
-       price, professional_type || null, payment_method || null, payment_status]
+      [
+        req.user.id, service_type, address,
+        latitude || null, longitude || null,
+        price, professional_type || null,
+        payment_method || null, payment_status,
+      ]
     );
-    return res.status(201).json({ ok: true, data: result.rows[0] });
+
+    const newService = result.rows[0];
+
+    // Notificar profesionales cercanos en background
+    try {
+      const { notifyNearbyProfessionals } = require("./notifications.controller");
+      notifyNearbyProfessionals(newService).catch((err) =>
+        console.warn("notifyNearbyProfessionals error:", err.message)
+      );
+    } catch (e) {
+      console.warn("No se pudo importar notifications.controller:", e.message);
+    }
+
+    return res.status(201).json({ ok: true, data: newService });
   } catch (err) {
     console.error("ERROR CREATE:", err);
     return res.status(500).json({ ok: false, error: "Error creando solicitud" });
@@ -87,7 +105,6 @@ exports.getOpenForBarber = async (req, res) => {
       return res.status(403).json({ ok: false, error: "Solo profesionales" });
     }
 
-    // Si el profesional esta inactivo, no devolver solicitudes
     const userResult = await pool.query(`SELECT is_active FROM users WHERE id=$1`, [req.user.id]);
     const isActive = userResult.rows[0]?.is_active;
     if (isActive === false) {
@@ -155,7 +172,6 @@ exports.getById = async (req, res) => {
   }
 };
 
-// FIX CRITICO: Number() para comparar correctamente JWT string vs DB integer
 exports.updateStatus = async (req, res) => {
   try {
     const { id } = req.params;
@@ -168,20 +184,17 @@ exports.updateStatus = async (req, res) => {
     if (existing.rowCount === 0) {
       return res.status(404).json({ ok: false, error: "Solicitud no encontrada" });
     }
-    const sr = existing.rows[0];
+    const sr     = existing.rows[0];
     const userId = Number(req.user.id);
 
-    // Solo el cliente puede cancelar
     if (status === "cancelled" && Number(sr.client_id) !== userId) {
       return res.status(403).json({ ok: false, error: "Solo el cliente puede cancelar" });
     }
-
-    // FIX: Number() evita fallo por comparacion string vs integer
     if (["on_route", "arrived", "completed"].includes(status) && Number(sr.assigned_barber_id) !== userId) {
       return res.status(403).json({ ok: false, error: "Solo el profesional asignado puede actualizar el estado" });
     }
 
-    await pool.query(`UPDATE service_request SET status=$1 WHERE id=$2`, [status, id]);
+    await pool.query(`UPDATE service_request SET status=$1, updated_at=NOW() WHERE id=$2`, [status, id]);
     return res.json({ ok: true, status });
   } catch (err) {
     console.error("ERROR UPDATE STATUS:", err);
@@ -212,7 +225,6 @@ exports.getHistoryForProfessional = async (req, res) => {
   }
 };
 
-// Toggle activo/inactivo del profesional
 exports.toggleActive = async (req, res) => {
   try {
     if (!req.user || !PROFESSIONAL_ROLES.includes(req.user.role)) {
@@ -228,7 +240,6 @@ exports.toggleActive = async (req, res) => {
   }
 };
 
-// Obtener estado activo del profesional
 exports.getActiveStatus = async (req, res) => {
   try {
     if (!req.user) return res.status(401).json({ ok: false });
