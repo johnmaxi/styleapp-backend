@@ -2,6 +2,7 @@
 const pool = require("../db/db");
 
 const PROFESSIONAL_ROLES = ["barber", "estilista", "quiropodologo"];
+const MP_METHODS = ["pse", "tarjeta"]; // métodos con precio fijo — sin contraofertas
 
 const roleToProType = {
   barber:        "profesional",
@@ -24,7 +25,7 @@ exports.createBid = async (req, res) => {
     started = true;
     const proType = roleToProType[req.user.role];
     const requestResult = await client.query(
-      `SELECT id, status FROM service_request
+      `SELECT id, status, payment_method FROM service_request
        WHERE id=$1 AND status='open' AND professional_type=$2 FOR UPDATE`,
       [service_request_id, proType]
     );
@@ -35,6 +36,17 @@ exports.createBid = async (req, res) => {
         error: "Esta solicitud no esta disponible para tu perfil o ya fue tomada",
       });
     }
+
+    // ── BLOQUEAR contraofertas para PSE y Tarjeta ──────────────────────────
+    const paymentMethod = requestResult.rows[0].payment_method;
+    if (MP_METHODS.includes(paymentMethod)) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        ok: false,
+        error: `Este servicio tiene precio fijo (pago por ${paymentMethod === "pse" ? "PSE" : "Tarjeta"}). No se permiten contraofertas.`,
+      });
+    }
+
     const existingBid = await client.query(
       `SELECT id FROM bids WHERE service_request_id=$1 AND barber_id=$2 AND status='pending'`,
       [service_request_id, req.user.id]
@@ -117,6 +129,7 @@ exports.getMyBids = async (req, res) => {
     const result = await pool.query(
       `SELECT bids.id, bids.service_request_id, bids.amount, bids.status, bids.created_at,
               sr.service_type, sr.address, sr.price as original_price, sr.status as request_status,
+              sr.payment_method,
               client.name as client_name
        FROM bids
        JOIN service_request sr ON sr.id = bids.service_request_id
@@ -143,6 +156,7 @@ exports.getMyBidsAll = async (req, res) => {
     const result = await pool.query(
       `SELECT bids.id, bids.service_request_id, bids.amount, bids.status, bids.created_at,
               sr.service_type, sr.address, sr.price as original_price, sr.status as request_status,
+              sr.payment_method,
               client.name as client_name
        FROM bids
        JOIN service_request sr ON sr.id = bids.service_request_id
@@ -187,9 +201,7 @@ exports.acceptBid = async (req, res) => {
       [bid.service_request_id, bidId]
     );
     await client.query(
-      `UPDATE service_request
-       SET status='accepted', assigned_barber_id=$1, price=$2
-       WHERE id=$3`,
+      `UPDATE service_request SET status='accepted', assigned_barber_id=$1, price=$2 WHERE id=$3`,
       [bid.barber_id, bid.amount, bid.service_request_id]
     );
     await client.query("COMMIT");
@@ -247,8 +259,6 @@ exports.rejectBid = async (req, res) => {
   }
 };
 
-// ── NUEVO: Profesional acepta el precio original directamente ────────────────
-// Crea la bid y asigna assigned_barber_id en una sola transaccion atomica
 exports.acceptDirect = async (req, res) => {
   const client = await pool.connect();
   let started = false;
@@ -256,26 +266,20 @@ exports.acceptDirect = async (req, res) => {
     if (!req.user || !PROFESSIONAL_ROLES.includes(req.user.role)) {
       return res.status(403).json({ ok: false, error: "Solo profesionales pueden aceptar" });
     }
-
     const { service_request_id } = req.body;
     if (!service_request_id) {
       return res.status(400).json({ ok: false, error: "service_request_id requerido" });
     }
-
     await client.query("BEGIN");
     started = true;
-
     const proType = roleToProType[req.user.role];
-
-    // Verificar que la solicitud existe, esta abierta y es del tipo correcto
     const srResult = await client.query(
-      `SELECT id, price, status, professional_type
+      `SELECT id, price, status, professional_type, payment_method
        FROM service_request
        WHERE id=$1 AND status='open' AND professional_type=$2
        FOR UPDATE`,
       [service_request_id, proType]
     );
-
     if (srResult.rowCount === 0) {
       await client.query("ROLLBACK");
       return res.status(409).json({
@@ -283,10 +287,7 @@ exports.acceptDirect = async (req, res) => {
         error: "La solicitud no esta disponible o ya fue tomada",
       });
     }
-
     const sr = srResult.rows[0];
-
-    // Verificar que no tiene ya una bid activa de este profesional
     const existingBid = await client.query(
       `SELECT id FROM bids WHERE service_request_id=$1 AND barber_id=$2 AND status='pending'`,
       [service_request_id, req.user.id]
@@ -295,32 +296,21 @@ exports.acceptDirect = async (req, res) => {
       await client.query("ROLLBACK");
       return res.status(400).json({ ok: false, error: "Ya tienes una oferta pendiente para esta solicitud" });
     }
-
-    // 1. Crear bid con precio original y status 'accepted' directamente
     const bidResult = await client.query(
       `INSERT INTO bids (service_request_id, barber_id, amount, status)
        VALUES ($1, $2, $3, 'accepted') RETURNING id`,
       [service_request_id, req.user.id, sr.price]
     );
     const bidId = bidResult.rows[0].id;
-
-    // 2. Rechazar otras bids pendientes de esta solicitud
     await client.query(
-      `UPDATE bids SET status='rejected'
-       WHERE service_request_id=$1 AND id<>$2`,
+      `UPDATE bids SET status='rejected' WHERE service_request_id=$1 AND id<>$2`,
       [service_request_id, bidId]
     );
-
-    // 3. FIX CLAVE: actualizar status, assigned_barber_id Y price atomicamente
     await client.query(
-      `UPDATE service_request
-       SET status='accepted', assigned_barber_id=$1, price=$2
-       WHERE id=$3`,
+      `UPDATE service_request SET status='accepted', assigned_barber_id=$1, price=$2 WHERE id=$3`,
       [req.user.id, sr.price, service_request_id]
     );
-
     await client.query("COMMIT");
-
     return res.json({
       ok: true,
       bid_id: bidId,
