@@ -198,15 +198,12 @@ exports.servicePaymentResult = async (req, res) => {
       <h2>${title}</h2>
       <p>${msg}</p>
       <p style="color:#555;font-size:12px">Ref: ${ref || "-"}</p>
-      <button class="btn" onclick="location.href='styleapp://payment-result?status=${isSuccess ? 'success' : 'pending'}&ref=${ref || ''}'; setTimeout(()=>window.close(),500);">
-        Volver a la app ✓
+      <button class="btn" onclick="window.history.back()">
+        ← Volver a la app
       </button>
       <script>
-        // Intentar redirigir a la app automáticamente
-        setTimeout(function() {
-          location.href = 'styleapp://payment-result?status=${isSuccess ? "success" : "pending"}&ref=${ref || ""}';
-          setTimeout(function() { window.close(); }, 500);
-        }, 1500);
+        // Cerrar automáticamente — la app verifica via polling
+        setTimeout(function() { window.history.back(); }, 2000);
       </script>
     </body>
     </html>

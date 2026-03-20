@@ -1,7 +1,7 @@
 // src/controllers/payments.controller.js
 const pool = require("../db/db");
 
-// ── Crear preferencia de MercadoPago (Checkout Pro) ───────────────────────
+// ── Crear preferencia MP para RECARGA de saldo ────────────────────────────
 exports.createMPPreference = async (req, res) => {
   try {
     if (!req.user) {
@@ -23,8 +23,8 @@ exports.createMPPreference = async (req, res) => {
       return res.status(500).json({ ok: false, error: "Pasarela de pagos no configurada" });
     }
 
-    const amountCOP   = amount / 100;           // convertir centavos a pesos
-    const reference   = `STYLE-${req.user.id}-${Date.now()}`;
+    const amountCOP   = amount / 100;
+    const reference   = `STYLE-${req.user.id}-${Date.now()}`; // prefijo STYLE = recarga
     const backendUrl  = process.env.BACKEND_URL || "https://styleapp-backend-production.up.railway.app";
 
     const preference = {
@@ -52,7 +52,6 @@ exports.createMPPreference = async (req, res) => {
       expires:             false,
     };
 
-    // Crear preferencia en MercadoPago
     const mpRes = await fetch("https://api.mercadopago.com/checkout/preferences", {
       method:  "POST",
       headers: {
@@ -70,7 +69,7 @@ exports.createMPPreference = async (req, res) => {
 
     const mpData = await mpRes.json();
 
-    // Guardar transaccion pendiente
+    // Guardar transaccion pendiente con tipo "recharge"
     try {
       await pool.query(
         `INSERT INTO transactions (user_id, reference, amount_in_cents, status, created_at)
@@ -83,9 +82,9 @@ exports.createMPPreference = async (req, res) => {
     }
 
     return res.json({
-      ok:          true,
-      checkout_url: mpData.init_point,       // URL produccion
-      sandbox_url:  mpData.sandbox_init_point, // URL pruebas
+      ok:           true,
+      checkout_url: mpData.init_point,
+      sandbox_url:  mpData.sandbox_init_point,
       preference_id: mpData.id,
       reference,
     });
@@ -96,15 +95,14 @@ exports.createMPPreference = async (req, res) => {
   }
 };
 
-// ── Resultado de pago — MercadoPago redirige aqui ─────────────────────────
+// ── Resultado de recarga — MP redirige aqui ───────────────────────────────
 exports.mpResult = async (req, res) => {
-  const { status, ref, payment_id, collection_status } = req.query;
-
+  const { status, ref, collection_status } = req.query;
   const finalStatus = status || collection_status;
 
-  if (finalStatus === "success" || finalStatus === "approved") {
-    // Acreditar saldo si hay referencia
-    if (ref) {
+  if ((finalStatus === "success" || finalStatus === "approved") && ref) {
+    // Solo acreditar saldo si es una RECARGA (prefijo STYLE-)
+    if (String(ref).startsWith("STYLE-")) {
       try {
         await pool.query(
           `UPDATE users
@@ -119,6 +117,7 @@ exports.mpResult = async (req, res) => {
           `UPDATE transactions SET status='approved', updated_at=NOW() WHERE reference=$1`,
           [ref]
         );
+        console.log(`Recarga aprobada ref=${ref}`);
       } catch (dbErr) {
         console.warn("Error acreditando saldo:", dbErr.message);
       }
@@ -128,8 +127,7 @@ exports.mpResult = async (req, res) => {
       <html><body style="font-family:sans-serif;text-align:center;padding:40px;background:#0d0d0d;color:#fff">
         <h2 style="color:#4caf50">✅ Pago aprobado</h2>
         <p>Tu saldo fue recargado exitosamente.</p>
-        <p style="color:#888;font-size:14px">Vuelve a la app StyleApp para continuar.</p>
-        <p style="color:#555;font-size:12px;margin-top:24px">Referencia: ${ref || "-"}</p>
+        <p style="color:#888">Vuelve a la app StyleApp para continuar.</p>
       </body></html>
     `);
   }
@@ -138,8 +136,8 @@ exports.mpResult = async (req, res) => {
     return res.send(`
       <html><body style="font-family:sans-serif;text-align:center;padding:40px;background:#0d0d0d;color:#fff">
         <h2 style="color:#D4AF37">⏳ Pago pendiente</h2>
-        <p>Tu pago esta siendo procesado.</p>
-        <p style="color:#888;font-size:14px">Vuelve a la app StyleApp para verificar tu saldo en unos minutos.</p>
+        <p>El estado de tu pago está siendo procesado.</p>
+        <p style="color:#888">Vuelve a la app StyleApp para verificar tu saldo.</p>
       </body></html>
     `);
   }
@@ -147,8 +145,7 @@ exports.mpResult = async (req, res) => {
   return res.send(`
     <html><body style="font-family:sans-serif;text-align:center;padding:40px;background:#0d0d0d;color:#fff">
       <h2 style="color:#e53935">❌ Pago no completado</h2>
-      <p>El pago no fue procesado. Puedes intentarlo de nuevo desde la app.</p>
-      <p style="color:#888;font-size:14px">Vuelve a la app StyleApp.</p>
+      <p>El pago no fue procesado. Vuelve a la app e intenta de nuevo.</p>
     </body></html>
   `);
 };
@@ -161,29 +158,48 @@ exports.mpWebhook = async (req, res) => {
     if (type === "payment" && data?.id) {
       const accessToken = process.env.MP_ACCESS_TOKEN;
 
-      // Consultar el pago a MP
       const mpRes = await fetch(`https://api.mercadopago.com/v1/payments/${data.id}`, {
         headers: { "Authorization": `Bearer ${accessToken}` },
       });
       const payment = await mpRes.json();
 
       if (payment.status === "approved") {
-        const reference = payment.external_reference;
-        const amount    = payment.transaction_amount;
+        const reference    = payment.external_reference;
+        const amount       = payment.transaction_amount;
 
-        try {
-          await pool.query(
-            `UPDATE transactions SET status='approved', updated_at=NOW() WHERE reference=$1`,
-            [reference]
-          );
-          await pool.query(
-            `UPDATE users SET balance = COALESCE(balance, 0) + $1
-             WHERE id = (SELECT user_id FROM transactions WHERE reference=$2 LIMIT 1)`,
-            [amount, reference]
-          );
-          console.log(`MP Webhook: pago aprobado ref=${reference} amount=${amount}`);
-        } catch (dbErr) {
-          console.warn("Webhook MP: error DB:", dbErr.message);
+        // ── CRÍTICO: distinguir tipo de pago por prefijo de referencia ──
+        if (String(reference).startsWith("STYLE-")) {
+          // Es una RECARGA de saldo — acreditar al usuario
+          try {
+            await pool.query(
+              `UPDATE transactions SET status='approved', updated_at=NOW() WHERE reference=$1`,
+              [reference]
+            );
+            await pool.query(
+              `UPDATE users SET balance = COALESCE(balance, 0) + $1
+               WHERE id = (SELECT user_id FROM transactions WHERE reference=$2 LIMIT 1)`,
+              [amount, reference]
+            );
+            console.log(`MP Webhook: recarga aprobada ref=${reference} amount=${amount}`);
+          } catch (dbErr) {
+            console.warn("Webhook recarga error:", dbErr.message);
+          }
+
+        } else if (String(reference).startsWith("SVC-PRE-")) {
+          // Es un PAGO DE SERVICIO anticipado — solo actualizar status, NO tocar saldo
+          try {
+            await pool.query(
+              `UPDATE transactions SET status='approved', updated_at=NOW() WHERE reference=$1`,
+              [reference]
+            );
+            console.log(`MP Webhook: pago aprobado ref=${reference} amount=${amount}`);
+          } catch (dbErr) {
+            console.warn("Webhook servicio error:", dbErr.message);
+          }
+
+        } else {
+          // Referencia desconocida — solo loguear
+          console.log(`MP Webhook: pago con ref desconocida ${reference}`);
         }
       }
     }
