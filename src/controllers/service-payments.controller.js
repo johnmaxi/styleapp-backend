@@ -198,12 +198,18 @@ exports.servicePaymentResult = async (req, res) => {
       <h2>${title}</h2>
       <p>${msg}</p>
       <p style="color:#555;font-size:12px">Ref: ${ref || "-"}</p>
-      <button class="btn" onclick="window.history.back()">
-        ← Volver a la app
+      <button class="btn" onclick="closePage()">
+        ✓ Listo — Volver a la app
       </button>
       <script>
-        // Cerrar automáticamente — la app verifica via polling
-        setTimeout(function() { window.history.back(); }, 2000);
+        function closePage() {
+          // Intentar cerrar de múltiples formas
+          try { window.close(); } catch(e) {}
+          try { window.history.go(-(window.history.length)); } catch(e) {}
+          try { location.replace("about:blank"); } catch(e) {}
+        }
+        // Cerrar automáticamente después de 2s
+        setTimeout(closePage, 2000);
       </script>
     </body>
     </html>
