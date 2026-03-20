@@ -154,41 +154,57 @@ exports.verifyServicePayment = async (req, res) => {
 
 // ── 3. Resultado de pago — MP redirige aquí ───────────────────────────────
 exports.servicePaymentResult = async (req, res) => {
-  const { status, ref } = req.query;
+  const { status, ref, payment_id, collection_status } = req.query;
+  const finalStatus = status || collection_status;
 
-  if ((status === "success" || status === "approved") && ref) {
+  // Actualizar BD si viene como éxito
+  if (ref && (finalStatus === "success" || finalStatus === "approved")) {
     try {
       await pool.query(
         `UPDATE transactions SET status='approved', updated_at=NOW() WHERE reference=$1`,
         [ref]
       );
+      console.log(`service-result: pago aprobado ref=${ref}`);
     } catch (e) { console.warn("Error actualizando transaccion:", e.message); }
-
-    return res.send(`
-      <html><body style="font-family:sans-serif;text-align:center;padding:40px;background:#0d0d0d;color:#fff">
-        <h2 style="color:#4caf50">✅ Pago aprobado</h2>
-        <p>Tu pago fue procesado exitosamente.</p>
-        <p style="color:#aaa;font-size:13px">Vuelve a la app StyleApp para publicar tu servicio.</p>
-        <p style="color:#555;font-size:11px">Ref: ${ref}</p>
-      </body></html>
-    `);
   }
 
-  if (status === "pending") {
-    return res.send(`
-      <html><body style="font-family:sans-serif;text-align:center;padding:40px;background:#0d0d0d;color:#fff">
-        <h2 style="color:#D4AF37">⏳ Pago pendiente</h2>
-        <p>Tu pago está siendo procesado.</p>
-        <p style="color:#aaa;font-size:13px">Vuelve a la app y verifica en unos minutos.</p>
-      </body></html>
-    `);
-  }
+  // Para TODOS los casos mostrar página que se cierra sola
+  // La app verifica automáticamente via polling — no depende de esta página
+  const isSuccess = finalStatus === "success" || finalStatus === "approved";
+  const isPending = finalStatus === "pending";
+
+  const emoji   = isSuccess ? "✅" : isPending ? "⏳" : "ℹ️";
+  const title   = isSuccess ? "Pago procesado"  : isPending ? "Pago en proceso" : "Procesando...";
+  const msg     = isSuccess ? "Vuelve a la app para continuar." : "Vuelve a la app StyleApp.";
+  const color   = isSuccess ? "#4caf50" : isPending ? "#D4AF37" : "#2196F3";
 
   return res.send(`
-    <html><body style="font-family:sans-serif;text-align:center;padding:40px;background:#0d0d0d;color:#fff">
-      <h2 style="color:#e53935">❌ Pago no completado</h2>
-      <p>El pago no fue procesado. Vuelve a la app e intenta de nuevo.</p>
-    </body></html>
+    <html>
+    <head>
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <style>
+        body { font-family: sans-serif; text-align: center; padding: 40px 20px;
+               background: #0d0d0d; color: #fff; margin: 0; }
+        h2   { color: ${color}; font-size: 24px; margin-bottom: 16px; }
+        p    { color: #aaa; font-size: 15px; line-height: 1.5; }
+        .btn { display: inline-block; margin-top: 24px; padding: 14px 28px;
+               background: ${color}; color: #000; border-radius: 10px;
+               font-weight: bold; font-size: 16px; text-decoration: none;
+               cursor: pointer; border: none; }
+      </style>
+    </head>
+    <body>
+      <div style="font-size:48px">${emoji}</div>
+      <h2>${title}</h2>
+      <p>${msg}</p>
+      <p style="color:#555;font-size:12px">Ref: ${ref || "-"}</p>
+      <button class="btn" onclick="window.close()">Volver a la app</button>
+      <script>
+        // Intentar cerrar automáticamente después de 2 segundos
+        setTimeout(function() { window.close(); }, 2000);
+      </script>
+    </body>
+    </html>
   `);
 };
 
