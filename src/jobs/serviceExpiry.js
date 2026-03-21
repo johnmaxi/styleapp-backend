@@ -4,8 +4,8 @@
 
 const pool = require("../db/db");
 
-const EXPIRY_MINUTES        = 60; // servicio expira a los 60 min
-const WARNING_MINUTES       = 30; // aviso al cliente a los 30 min
+const EXPIRY_MINUTES        = 10; // servicio expira a los 10 min
+const WARNING_MINUTES       = 7;  // aviso al cliente a los 7 min
 
 async function expireOldServices() {
   const client = await pool.connect();
@@ -15,7 +15,7 @@ async function expireOldServices() {
       `UPDATE service_request
        SET status = 'cancelled', updated_at = NOW()
        WHERE status = 'open'
-         AND requested_at < NOW() - INTERVAL '${EXPIRY_MINUTES} minutes'
+         AND requested_at < NOW() - INTERVAL '10 minutes'
        RETURNING id, client_id, service_type, address`
     );
 
@@ -49,8 +49,8 @@ async function expireOldServices() {
        JOIN users u ON u.id = sr.client_id
        WHERE sr.status = 'open'
          AND sr.expiry_notified = false
-         AND sr.requested_at < NOW() - INTERVAL '${WARNING_MINUTES} minutes'
-         AND sr.requested_at > NOW() - INTERVAL '${EXPIRY_MINUTES} minutes'`
+         AND sr.requested_at < NOW() - INTERVAL '7 minutes'
+         AND sr.requested_at > NOW() - INTERVAL '10 minutes'`
     );
 
     for (const service of toWarn.rows) {

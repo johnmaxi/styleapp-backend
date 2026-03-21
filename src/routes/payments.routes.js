@@ -21,4 +21,7 @@ router.get( "/service-result",                            svcPaymentsCtrl.servic
 router.post("/finalize-service/:service_id", auth, svcPaymentsCtrl.finalizeService);
 router.get( "/check-balance/:service_id",    auth, svcPaymentsCtrl.checkClientBalance);
 
+// ── Cancelación de servicio con penalización ─────────────────────────────
+router.post("/cancel-service/:service_id", auth, svcPaymentsCtrl.cancelService);
+
 module.exports = router;

@@ -51,7 +51,7 @@ exports.create = async (req, res) => {
       `INSERT INTO service_request
        (client_id, service_type, address, latitude, longitude, price,
         professional_type, payment_method, payment_status, status, expires_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'open', NOW() + INTERVAL '60 minutes') RETURNING *`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'open', NOW() + INTERVAL '10 minutes') RETURNING *`,
       [
         req.user.id, service_type, address,
         latitude || null, longitude || null,

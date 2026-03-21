@@ -369,3 +369,103 @@ exports.checkClientBalance = async (req, res) => {
     return res.status(500).json({ ok: false, error: err.message });
   }
 };
+
+// ── Cancelar servicio con lógica de penalización ──────────────────────────
+// Sin penalización si status=open (nadie fue afectado)
+// Con penalización 15% si status=accepted/on_route/arrived
+exports.cancelService = async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { service_id } = req.params;
+    const client_id      = req.user.id;
+
+    const srRes = await client.query(
+      `SELECT * FROM service_request WHERE id=$1 AND client_id=$2`,
+      [service_id, client_id]
+    );
+    const service = srRes.rows[0];
+    if (!service) return res.status(404).json({ ok: false, error: "Servicio no encontrado" });
+
+    const status         = service.status;
+    const total          = Number(service.price);
+    const payment_method = service.payment_method;
+    const professional_id = service.assigned_barber_id;
+
+    const PENALTY_PCT     = 0.15;
+    const APP_PCT         = 0.10;
+    const PROF_PCT        = 0.05;
+    const penalty_amt     = Math.round(total * PENALTY_PCT * 100) / 100;
+    const app_amt         = Math.round(total * APP_PCT    * 100) / 100;
+    const prof_amt        = Math.round(total * PROF_PCT   * 100) / 100;
+
+    // Sin penalización si el servicio aún está abierto
+    const HAS_PENALTY = ["accepted", "on_route", "arrived"].includes(status);
+
+    await client.query("BEGIN");
+
+    if (HAS_PENALTY && total > 0) {
+      const MP_METHODS = ["pse", "tarjeta"];
+
+      if (!MP_METHODS.includes(payment_method)) {
+        // Efectivo / Nequi — descontar del saldo del cliente
+        const balRes     = await client.query(`SELECT balance FROM users WHERE id=$1 FOR UPDATE`, [client_id]);
+        const clientBal  = Number(balRes.rows[0]?.balance || 0);
+
+        if (clientBal >= penalty_amt) {
+          await client.query(`UPDATE users SET balance = balance - $1 WHERE id=$2`, [penalty_amt, client_id]);
+        }
+        // Pagar 5% al profesional si estaba asignado
+        if (professional_id) {
+          await client.query(`UPDATE users SET balance = balance + $1 WHERE id=$2`, [prof_amt, professional_id]);
+        }
+      } else {
+        // PSE / Tarjeta — el dinero ya estaba en la app (MP)
+        // Retornar 85% al cliente, conservar 15%
+        const refund_amt = Math.round(total * 0.85 * 100) / 100;
+        await client.query(`UPDATE users SET balance = balance + $1 WHERE id=$2`, [refund_amt, client_id]);
+        if (professional_id) {
+          await client.query(`UPDATE users SET balance = balance + $1 WHERE id=$2`, [prof_amt, professional_id]);
+        }
+      }
+
+      // Registrar penalización
+      await client.query(
+        `INSERT INTO app_commissions
+         (service_id, professional_id, client_id, total_service,
+          commission_pct, commission_amt, professional_amt,
+          payment_method, payment_status, notes, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'completed',$9,NOW(),NOW())`,
+        [
+          service_id, professional_id || null, client_id, total,
+          PENALTY_PCT * 100, app_amt, prof_amt,
+          payment_method,
+          `Penalización por cancelación. App: $${app_amt}, Profesional: $${prof_amt}`,
+        ]
+      );
+    }
+
+    // Cancelar el servicio
+    await client.query(
+      `UPDATE service_request SET status='cancelled', updated_at=NOW() WHERE id=$1`,
+      [service_id]
+    );
+
+    await client.query("COMMIT");
+
+    return res.json({
+      ok: true,
+      penalized: HAS_PENALTY,
+      penalty_amt: HAS_PENALTY ? penalty_amt : 0,
+      message: HAS_PENALTY
+        ? `Servicio cancelado. Se descontaron $${penalty_amt.toLocaleString("es-CO")} (15%) de penalización.`
+        : "Servicio cancelado sin penalización.",
+    });
+
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("CANCEL SERVICE ERROR:", err);
+    return res.status(500).json({ ok: false, error: err.message });
+  } finally {
+    client.release();
+  }
+};
