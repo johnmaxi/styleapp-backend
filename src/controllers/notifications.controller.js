@@ -9,16 +9,23 @@ async function sendExpoPush(tokens, title, body, data = {}) {
 
   const messages = tokens.map((token) => ({
     to:                  token,
-    sound:               "default",
+    sound:               "default",  // sonido del sistema
     title,
     body,
     data,
     priority:            "high",
     channelId:           "styleapp-urgent",
-    ttl:                 3600,
-    expiration:          Math.floor(Date.now() / 1000) + 3600,
+    ttl:                 600,        // 10 minutos (igual que expiración del servicio)
+    expiration:          Math.floor(Date.now() / 1000) + 600,
     badge:               1,
     _displayInForeground: true,
+    android: {
+      channelId:   "styleapp-urgent",
+      sound:       true,
+      priority:    "max",
+      vibrate:     [0, 300, 200, 300],
+      color:       "#D4AF37",
+    },
   }));
 
   try {
