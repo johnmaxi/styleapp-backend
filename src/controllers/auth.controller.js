@@ -2,6 +2,7 @@
 const pool   = require("../db/db");
 const bcrypt = require("bcryptjs");
 const jwt    = require("jsonwebtoken");
+const emailService = require("../services/email.service");
 
 const VALID_ROLES        = ["client", "barber", "estilista", "quiropodologo", "admin"];
 const PROFESSIONAL_ROLES = ["barber", "estilista", "quiropodologo"];
@@ -97,6 +98,12 @@ exports.register = async (req, res) => {
     // Notificar al admin si es profesional
     if (isProfessional) {
       notifyAdminNewProfessional(newUser).catch(() => {});
+      // Enviar email de bienvenida con instrucciones de espera
+      emailService.sendWelcomeProfessionalEmail({
+        name:  newUser.name,
+        email: newUser.email,
+        role:  newUser.role,
+      }).catch(() => {});
     }
 
     return res.status(201).json({
@@ -219,7 +226,7 @@ exports.reviewProfessional = async (req, res) => {
         [professional_id]
       );
 
-      // Notificar al profesional
+      // Notificación push
       if (prof.push_token) {
         await fetch("https://exp.host/--/api/v2/push/send", {
           method: "POST",
@@ -235,6 +242,13 @@ exports.reviewProfessional = async (req, res) => {
         });
       }
 
+      // Email de aprobación
+      emailService.sendApprovalEmail({
+        name:  prof.name,
+        email: prof.email,
+        role:  prof.role,
+      }).catch((e) => console.warn("Email aprobacion error:", e.message));
+
       return res.json({ ok: true, message: `Cuenta de ${prof.name} aprobada exitosamente.` });
 
     } else {
@@ -246,7 +260,7 @@ exports.reviewProfessional = async (req, res) => {
         [reason, professional_id]
       );
 
-      // Notificar al profesional
+      // Notificación push
       if (prof.push_token) {
         await fetch("https://exp.host/--/api/v2/push/send", {
           method: "POST",
@@ -261,6 +275,14 @@ exports.reviewProfessional = async (req, res) => {
           }]),
         });
       }
+
+      // Email de rechazo con motivo
+      emailService.sendRejectionEmail({
+        name:   prof.name,
+        email:  prof.email,
+        role:   prof.role,
+        reason,
+      }).catch((e) => console.warn("Email rechazo error:", e.message));
 
       return res.json({ ok: true, message: `Registro de ${prof.name} rechazado.` });
     }
