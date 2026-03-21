@@ -72,16 +72,14 @@ exports.notifyNearbyProfessionals = async (serviceRequest) => {
     };
     const role = roleMap[professional_type] || "barber";
 
-    // Buscar profesionales activos con push_token y ubicación reciente
+    // Buscar profesionales activos con push_token
+    // La ubicación es opcional — si no tienen, igual notificamos sin distancia
     const result = await pool.query(
       `SELECT id, name, push_token, last_latitude, last_longitude
        FROM users
        WHERE role = $1
          AND is_active = true
          AND push_token IS NOT NULL
-         AND last_latitude IS NOT NULL
-         AND last_longitude IS NOT NULL
-         AND last_location_at > NOW() - INTERVAL '2 hours'
        LIMIT 20`,
       [role]
     );
@@ -91,8 +89,12 @@ exports.notifyNearbyProfessionals = async (serviceRequest) => {
       return;
     }
 
-    // Calcular distancia y filtrar los 5 más cercanos (máx 15 km)
-    const withDistance = result.rows
+    // Separar profesionales con y sin ubicación
+    const withLocation    = result.rows.filter(p => p.last_latitude && p.last_longitude);
+    const withoutLocation = result.rows.filter(p => !p.last_latitude || !p.last_longitude);
+
+    // Calcular distancia para los que tienen ubicación
+    const withDistance = withLocation
       .map((prof) => ({
         ...prof,
         distance: distanceKm(
@@ -104,34 +106,44 @@ exports.notifyNearbyProfessionals = async (serviceRequest) => {
       .sort((a, b) => a.distance - b.distance)
       .slice(0, 5);
 
-    if (withDistance.length === 0) {
-      console.log("Notif: ningún profesional dentro de 15km");
+    // Los sin ubicación reciben notificación sin distancia (máx 5 adicionales)
+    const withoutDistanceSlice = withoutLocation.slice(0, Math.max(0, 5 - withDistance.length));
+
+    const toNotify = [...withDistance, ...withoutDistanceSlice];
+
+    if (toNotify.length === 0) {
+      console.log("Notif: ningún profesional disponible para notificar");
       return;
     }
 
-    // Enviar notificación personalizada a cada uno con tiempo estimado
-    for (const prof of withDistance) {
-      const eta  = estimatedMinutes(prof.distance);
-      const dist = prof.distance < 1
-        ? `${Math.round(prof.distance * 1000)}m`
-        : `${prof.distance.toFixed(1)}km`;
+    // Enviar notificación a cada profesional
+    for (const prof of toNotify) {
+      const hasLocation = prof.distance !== undefined;
+      const eta  = hasLocation ? estimatedMinutes(prof.distance) : "distancia desconocida";
+      const dist = hasLocation
+        ? (prof.distance < 1 ? `${Math.round(prof.distance * 1000)}m` : `${prof.distance.toFixed(1)}km`)
+        : "";
+
+      const bodyText = dist
+        ? `${service_type}\n📍 ${address}\n💰 $${Number(price).toLocaleString("es-CO")} COP\n🚗 ${dist} · ~${eta}`
+        : `${service_type}\n📍 ${address}\n💰 $${Number(price).toLocaleString("es-CO")} COP`;
 
       await sendExpoPush(
         [prof.push_token],
         `✂️ Nuevo servicio disponible`,
-        `${service_type}\n📍 ${address}\n💰 $${Number(price).toLocaleString("es-CO")} COP\n🚗 ${dist} · ~${eta}`,
+        bodyText,
         {
           type:       "new_service",
           service_id: id,
           service_type,
           address,
           price:      String(price),
-          distance:   String(dist),
+          distance:   dist,
           eta,
         }
       );
 
-      console.log(`Notif enviada a ${prof.name} (${dist}, ~${eta})`);
+      console.log(`Notif enviada a ${prof.name}${dist ? ` (${dist}, ~${eta})` : " (sin ubicación)"}`);
     }
 
   } catch (err) {
