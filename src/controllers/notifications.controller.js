@@ -8,13 +8,17 @@ async function sendExpoPush(tokens, title, body, data = {}) {
   if (!tokens || tokens.length === 0) return;
 
   const messages = tokens.map((token) => ({
-    to:    token,
-    sound: "default",
+    to:                  token,
+    sound:               "default",
     title,
     body,
     data,
-    priority: "high",
-    channelId: "styleapp-notifications",
+    priority:            "high",
+    channelId:           "styleapp-urgent",
+    ttl:                 3600,
+    expiration:          Math.floor(Date.now() / 1000) + 3600,
+    badge:               1,
+    _displayInForeground: true,
   }));
 
   try {
