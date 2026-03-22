@@ -176,7 +176,7 @@ exports.updateStatus = async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
-    const VALID = ["open", "accepted", "on_route", "arrived", "completed", "cancelled"];
+    const VALID = ["open", "accepted", "on_route", "arrived", "completed", "cancelled", "expired"];
     if (!VALID.includes(status)) {
       return res.status(400).json({ ok: false, error: "Estado invalido" });
     }
@@ -194,7 +194,19 @@ exports.updateStatus = async (req, res) => {
       return res.status(403).json({ ok: false, error: "Solo el profesional asignado puede actualizar el estado" });
     }
 
-    await pool.query(`UPDATE service_request SET status=$1, updated_at=NOW() WHERE id=$2`, [status, id]);
+    // Si republica (expired → open), renovar expires_at
+    if (status === "open") {
+      await pool.query(
+        `UPDATE service_request
+         SET status=$1, updated_at=NOW(),
+             expires_at=NOW() + INTERVAL '10 minutes',
+             expiry_notified=false
+         WHERE id=$2`,
+        [status, id]
+      );
+    } else {
+      await pool.query(`UPDATE service_request SET status=$1, updated_at=NOW() WHERE id=$2`, [status, id]);
+    }
     return res.json({ ok: true, status });
   } catch (err) {
     console.error("ERROR UPDATE STATUS:", err);
