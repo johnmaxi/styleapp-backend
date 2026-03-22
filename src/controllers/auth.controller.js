@@ -167,21 +167,39 @@ exports.login = async (req, res) => {
       { expiresIn: process.env.JWT_EXPIRES_IN || "7d" }
     );
 
+    // Mensaje especial si el profesional acaba de ser aprobado
+    // (primer login después de aprobación)
+    let approval_message = null;
+    if (PROFESSIONAL_ROLES.includes(user.role) && user.registration_status === "approved") {
+      // Verificar si es la primera vez que inicia sesión post-aprobación
+      const firstLogin = !user.last_login_at;
+      if (firstLogin || user.just_approved) {
+        approval_message = "✅ Tu cuenta fue aprobada. ¡Ya puedes recibir y aceptar servicios!";
+      }
+      // Actualizar last_login_at
+      await pool.query(
+        `UPDATE users SET last_login_at = NOW() WHERE id = $1`,
+        [user.id]
+      ).catch(() => {});
+    }
+
     return res.json({
       token,
+      approval_message,
       user: {
-        id:            user.id,
-        email:         user.email,
-        role:          user.role,
-        gender:        user.gender,
-        name:          user.name,
-        profile_photo: user.profile_photo,
-        rating:        user.rating,
-        phone:         user.phone,
-        address:       user.address,
-        city:          user.city,
-        neighborhood:  user.neighborhood,
-        is_active:     user.is_active,
+        id:                  user.id,
+        email:               user.email,
+        role:                user.role,
+        gender:              user.gender,
+        name:                user.name,
+        profile_photo:       user.profile_photo,
+        rating:              user.rating,
+        phone:               user.phone,
+        address:             user.address,
+        city:                user.city,
+        neighborhood:        user.neighborhood,
+        is_active:           user.is_active,
+        registration_status: user.registration_status,
       },
     });
   } catch (error) {

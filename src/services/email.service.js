@@ -1,13 +1,21 @@
 // src/services/email.service.js
 const nodemailer = require("nodemailer");
 
-// ── Configurar transporter Gmail ──────────────────────────────────────────
+// ── Configurar transporter Gmail — puerto 587 (Railway compatible) ──────────
 const transporter = nodemailer.createTransport({
-  service: "gmail",
+  host:   "smtp.gmail.com",
+  port:   587,
+  secure: false,          // TLS, NO SSL
   auth: {
     user: process.env.GMAIL_USER,
     pass: process.env.GMAIL_PASS,
   },
+  tls: {
+    rejectUnauthorized: false,
+  },
+  connectionTimeout: 10000,
+  greetingTimeout:   10000,
+  socketTimeout:     15000,
 });
 
 const FROM = `StyleApp <${process.env.GMAIL_USER}>`;
