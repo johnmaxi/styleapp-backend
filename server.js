@@ -11,7 +11,6 @@ const paymentsRoutes       = require("./src/routes/payments.routes");
 const aiRoutes             = require("./src/routes/ai.routes");
 const notifRoutes          = require("./src/routes/notifications.routes"); // NUEVO
 const adminRoutes          = require("./src/routes/admin.routes");
-const adminRoutes          = require("./src/routes/admin.routes");           // NUEVO
 
 const app = express();
 app.use(cors());
@@ -28,7 +27,6 @@ app.use("/api/payments",         paymentsRoutes);
 app.use("/api/ai",               aiRoutes);
 app.use("/api/notifications",    notifRoutes); // NUEVO
 app.use("/api/admin",            adminRoutes);
-app.use("/api/admin",            adminRoutes); // NUEVO
 
 // ── Compatibilidad sin prefijo /api ──────────────────────────────────────
 app.use("/auth",             authRoutes);
@@ -41,7 +39,6 @@ app.use("/payments",         paymentsRoutes);
 app.use("/ai",               aiRoutes);
 app.use("/notifications",    notifRoutes); // NUEVO
 app.use("/admin",            adminRoutes);
-app.use("/admin",            adminRoutes); // NUEVO
 
 app.get("/", (req, res) => {
   res.json({ ok: true, message: "StyleApp API v2 funcionando" });
