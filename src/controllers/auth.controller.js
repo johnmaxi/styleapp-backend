@@ -2,8 +2,6 @@
 const pool   = require("../db/db");
 const bcrypt = require("bcryptjs");
 const jwt    = require("jsonwebtoken");
-const emailService = require("../services/email.service");
-
 const VALID_ROLES        = ["client", "barber", "estilista", "quiropodologo", "admin"];
 const PROFESSIONAL_ROLES = ["barber", "estilista", "quiropodologo"];
 
