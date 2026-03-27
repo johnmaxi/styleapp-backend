@@ -140,7 +140,8 @@ exports.login = async (req, res) => {
     const result = await pool.query(
       `SELECT id, email, password, role, gender, name, profile_photo,
               rating, phone, address, city, neighborhood,
-              is_active, registration_status, registration_rejection_reason
+              is_active, registration_status, registration_rejection_reason,
+              last_login_at
        FROM users WHERE email = $1`,
       [email]
     );
@@ -177,20 +178,20 @@ exports.login = async (req, res) => {
       { expiresIn: process.env.JWT_EXPIRES_IN || "7d" }
     );
 
-    // Mensaje especial si el profesional acaba de ser aprobado
-    // (primer login después de aprobación)
+    // Mensaje al profesional según estado de su cuenta (solo primer login)
     let approval_message = null;
-    if (PROFESSIONAL_ROLES.includes(user.role) && user.registration_status === "approved") {
-      // Verificar si es la primera vez que inicia sesión post-aprobación
-      const firstLogin = !user.last_login_at;
-      if (firstLogin || user.just_approved) {
-        approval_message = "✅ Tu cuenta fue aprobada. ¡Ya puedes recibir y aceptar servicios!";
+    if (PROFESSIONAL_ROLES.includes(user.role)) {
+      const isFirstLogin = !user.last_login_at;
+      if (isFirstLogin && user.registration_status === "approved") {
+        approval_message = "✅ ¡Tu cuenta fue aprobada! Ya puedes recibir y aceptar servicios en StyleApp.";
       }
-      // Actualizar last_login_at
-      await pool.query(
-        `UPDATE users SET last_login_at = NOW() WHERE id = $1`,
-        [user.id]
-      ).catch(() => {});
+      // Actualizar last_login_at solo si es primer login
+      if (isFirstLogin) {
+        await pool.query(
+          `UPDATE users SET last_login_at = NOW() WHERE id = $1`,
+          [user.id]
+        ).catch(() => {});
+      }
     }
 
     return res.json({
