@@ -469,3 +469,120 @@ exports.cancelService = async (req, res) => {
     client.release();
   }
 };
+
+
+// ── Cancelar servicio por parte del PROFESIONAL ──────────────────────────
+// Si el profesional cancela después de aceptar: 15% penalización de su saldo
+exports.cancelServiceByProfessional = async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const { service_id }  = req.params;
+    const professional_id = req.user.id;
+
+    const srRes = await client.query(
+      `SELECT * FROM service_request WHERE id=$1 AND assigned_barber_id=$2`,
+      [service_id, professional_id]
+    );
+    const service = srRes.rows[0];
+    if (!service) {
+      return res.status(404).json({ ok: false, error: "Servicio no encontrado o no asignado a ti" });
+    }
+
+    const status         = service.status;
+    const total          = Number(service.price);
+    const payment_method = service.payment_method;
+    const client_id      = service.client_id;
+
+    // Solo penalizar si ya había aceptado
+    const HAS_PENALTY = ["accepted", "on_route", "arrived"].includes(status);
+
+    const PENALTY_PCT = 0.15;
+    const penalty_amt = Math.round(total * PENALTY_PCT * 100) / 100;
+
+    await client.query("BEGIN");
+
+    if (HAS_PENALTY && total > 0) {
+      // Descontar 15% del saldo del PROFESIONAL
+      const profRes = await client.query(
+        `SELECT balance FROM users WHERE id=$1 FOR UPDATE`, [professional_id]
+      );
+      const profBal = Number(profRes.rows[0]?.balance || 0);
+
+      if (profBal >= penalty_amt) {
+        await client.query(
+          `UPDATE users SET balance = balance - $1 WHERE id=$2`,
+          [penalty_amt, professional_id]
+        );
+      }
+
+      // Para PSE/Tarjeta: devolver 100% al cliente (el pago fue anticipado)
+      if (["pse", "tarjeta"].includes(payment_method)) {
+        await client.query(
+          `UPDATE users SET balance = balance + $1 WHERE id=$2`,
+          [total, client_id]
+        );
+      }
+
+      // Registrar penalización
+      await client.query(
+        `INSERT INTO app_commissions
+         (service_id, professional_id, client_id, total_service,
+          commission_pct, commission_amt, professional_amt,
+          payment_method, payment_status, notes, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'completed',$9,NOW(),NOW())`,
+        [
+          service_id, professional_id, client_id, total,
+          PENALTY_PCT * 100, penalty_amt, 0,
+          payment_method,
+          `Cancelación por profesional. Penalización 15%: $${penalty_amt}`,
+        ]
+      );
+
+      // Notificar al cliente
+      try {
+        const clientUserRes = await client.query(
+          `SELECT push_token, name FROM users WHERE id=$1`, [client_id]
+        );
+        const token = clientUserRes.rows[0]?.push_token;
+        if (token) {
+          await fetch("https://exp.host/--/api/v2/push/send", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify([{
+              to: token, sound: "default",
+              title: "⚠️ Profesional canceló el servicio",
+              body: "El profesional canceló tu solicitud. Puedes solicitar un nuevo servicio.",
+              priority: "high",
+              channelId: "styleapp-notifications",
+              data: { type: "service_cancelled_by_professional", service_id },
+            }]),
+          });
+        }
+      } catch {}
+    }
+
+    // Cancelar servicio
+    await client.query(
+      `UPDATE service_request SET status='cancelled', assigned_barber_id=NULL, updated_at=NOW() WHERE id=$1`,
+      [service_id]
+    );
+
+    await client.query("COMMIT");
+
+    return res.json({
+      ok:          true,
+      penalized:   HAS_PENALTY,
+      penalty_amt: HAS_PENALTY ? penalty_amt : 0,
+      message:     HAS_PENALTY
+        ? `Servicio cancelado. Se descontaron $${penalty_amt.toLocaleString("es-CO")} (15%) de tu saldo.`
+        : "Servicio cancelado sin penalización.",
+    });
+
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error("CANCEL BY PROFESSIONAL ERROR:", err);
+    return res.status(500).json({ ok: false, error: err.message });
+  } finally {
+    client.release();
+  }
+};

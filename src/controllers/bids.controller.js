@@ -274,7 +274,7 @@ exports.acceptDirect = async (req, res) => {
     started = true;
     const proType = roleToProType[req.user.role];
     const srResult = await client.query(
-      `SELECT id, price, status, professional_type, payment_method
+      `SELECT id, price, status, professional_type, payment_method, client_id
        FROM service_request
        WHERE id=$1 AND status='open' AND professional_type=$2
        FOR UPDATE`,
@@ -312,10 +312,11 @@ exports.acceptDirect = async (req, res) => {
     );
     await client.query("COMMIT");
     return res.json({
-      ok: true,
-      bid_id: bidId,
+      ok:                 true,
+      bid_id:             bidId,
       service_request_id,
-      message: "Servicio aceptado correctamente",
+      client_id:          sr.client_id,
+      message:            "Servicio aceptado correctamente",
     });
   } catch (err) {
     if (started) await client.query("ROLLBACK").catch(() => {});
