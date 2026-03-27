@@ -1,28 +1,40 @@
 // src/jobs/serviceExpiry.js
-// Cron job para expirar servicios automáticamente
-// Se ejecuta cada 5 minutos
-
 const pool = require("../db/db");
 
-const EXPIRY_MINUTES        = 10; // servicio expira a los 10 min
-const WARNING_MINUTES       = 7;  // aviso al cliente a los 7 min
+const EXPIRY_MINUTES  = 10;
+const WARNING_MINUTES = 7;
+
+async function sendExpoPush(tokens, title, body, data = {}) {
+  if (!tokens?.length) return;
+  try {
+    await fetch("https://exp.host/--/api/v2/push/send", {
+      method:  "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(tokens.map(token => ({
+        to: token, sound: "default", title, body, data,
+        priority: "high", channelId: "styleapp-notifications",
+      }))),
+    });
+  } catch {}
+}
 
 async function expireOldServices() {
   const client = await pool.connect();
   try {
-    // 1. Marcar como expirados los servicios que llevan más de 60 min abiertos
+    // ── 1. Expirar servicios abiertos que superaron los 10 min ─────────
     const expired = await client.query(
       `UPDATE service_request
-       SET status = 'cancelled', updated_at = NOW()
+       SET status = 'expired', updated_at = NOW()
        WHERE status = 'open'
-         AND requested_at < NOW() - INTERVAL '10 minutes'
-       RETURNING id, client_id, service_type, address`
+         AND requested_at < NOW() - INTERVAL '${EXPIRY_MINUTES} minutes'
+         AND (expires_at IS NULL OR expires_at < NOW())
+       RETURNING id, client_id, service_type, address, price,
+                 professional_type, payment_method`
     );
 
     if (expired.rowCount > 0) {
-      console.log(`Expirados ${expired.rowCount} servicios:`, expired.rows.map(r => r.id));
+      console.log(`Servicios expirados: ${expired.rowCount} →`, expired.rows.map(r => r.id));
 
-      // Notificar a los clientes que sus servicios expiraron
       for (const service of expired.rows) {
         try {
           const clientRes = await client.query(
@@ -33,24 +45,32 @@ async function expireOldServices() {
           if (token) {
             await sendExpoPush(
               [token],
-              "⏰ Servicio no encontrado",
-              `Tu solicitud de "${service.service_type}" expiró sin recibir profesionales. Puedes crear una nueva.`,
-              { type: "service_expired", service_id: service.id }
+              "⏰ Servicio sin profesional disponible",
+              `Tu solicitud de "${service.service_type}" expiró sin recibir profesionales. Puedes volver a publicarlo.`,
+              {
+                type:              "service_expired",
+                service_id:        service.id,
+                service_type:      service.service_type,
+                address:           service.address,
+                price:             String(service.price),
+                professional_type: service.professional_type,
+                payment_method:    service.payment_method,
+              }
             );
           }
         } catch {}
       }
     }
 
-    // 2. Notificar a clientes cuyo servicio lleva 30 min sin aceptar (aviso previo)
+    // ── 2. Advertencia a los 7 min (antes de expirar) ──────────────────
     const toWarn = await client.query(
       `SELECT sr.id, sr.client_id, sr.service_type, u.push_token
        FROM service_request sr
        JOIN users u ON u.id = sr.client_id
        WHERE sr.status = 'open'
          AND sr.expiry_notified = false
-         AND sr.requested_at < NOW() - INTERVAL '7 minutes'
-         AND sr.requested_at > NOW() - INTERVAL '10 minutes'`
+         AND sr.requested_at < NOW() - INTERVAL '${WARNING_MINUTES} minutes'
+         AND sr.requested_at > NOW() - INTERVAL '${EXPIRY_MINUTES} minutes'`
     );
 
     for (const service of toWarn.rows) {
@@ -58,8 +78,8 @@ async function expireOldServices() {
         if (service.push_token) {
           await sendExpoPush(
             [service.push_token],
-            "⚠️ Tu servicio lleva 30 min esperando",
-            `"${service.service_type}" no ha sido aceptado. Expirará en 30 min. Considera aumentar el precio.`,
+            "⚠️ Tu servicio expirará pronto",
+            `"${service.service_type}" lleva 7 min sin ser aceptado. Expirará en 3 min. Considera aumentar el precio.`,
             { type: "service_warning", service_id: service.id }
           );
         }
@@ -81,25 +101,74 @@ async function expireOldServices() {
   }
 }
 
-async function sendExpoPush(tokens, title, body, data = {}) {
-  if (!tokens?.length) return;
+
+// ── Recordatorios 1 hora antes para servicios agendados ──────────────────
+async function sendScheduledReminders() {
+  const client = await pool.connect();
   try {
-    await fetch("https://exp.host/--/api/v2/push/send", {
-      method:  "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(tokens.map(token => ({
-        to: token, sound: "default", title, body, data, priority: "high",
-        channelId: "styleapp-notifications",
-      }))),
-    });
-  } catch {}
+    // Servicios agendados que empiezan en 50-70 min (ventana para no duplicar)
+    const toRemind = await client.query(
+      `SELECT sr.id, sr.client_id, sr.assigned_barber_id,
+              sr.service_type, sr.address, sr.price, sr.scheduled_at,
+              uc.push_token AS client_token, uc.name AS client_name,
+              up.push_token AS prof_token, up.name AS prof_name
+       FROM service_request sr
+       JOIN users uc ON uc.id = sr.client_id
+       LEFT JOIN users up ON up.id = sr.assigned_barber_id
+       WHERE sr.scheduled_at IS NOT NULL
+         AND sr.status IN ('open','accepted')
+         AND sr.reminder_sent = false
+         AND sr.scheduled_at BETWEEN NOW() + INTERVAL '50 minutes'
+                                  AND NOW() + INTERVAL '70 minutes'`
+    );
+
+    for (const svc of toRemind.rows) {
+      const time = new Date(svc.scheduled_at).toLocaleTimeString("es-CO",
+        { hour: "2-digit", minute: "2-digit" });
+
+      // Notificar al cliente
+      if (svc.client_token) {
+        await sendExpoPush(
+          [svc.client_token],
+          "⏰ Recordatorio de tu servicio",
+          `Tu ${svc.service_type} está programado para las ${time}. ¡Prepárate!`,
+          { type: "service_reminder", service_id: svc.id, role: "client" }
+        );
+      }
+
+      // Notificar al profesional
+      if (svc.prof_token) {
+        await sendExpoPush(
+          [svc.prof_token],
+          "⏰ Recordatorio de servicio agendado",
+          `Tienes un ${svc.service_type} a las ${time} en ${svc.address || "la ubicación del cliente"}.`,
+          { type: "service_reminder", service_id: svc.id, role: "professional" }
+        );
+      }
+
+      // Marcar como enviado
+      await client.query(
+        `UPDATE service_request SET reminder_sent = true WHERE id = $1`,
+        [svc.id]
+      );
+    }
+
+    if (toRemind.rowCount > 0) {
+      console.log(`Recordatorios enviados: ${toRemind.rowCount}`);
+    }
+  } catch (err) {
+    console.error("Reminders error:", err.message);
+  } finally {
+    client.release();
+  }
 }
 
-// Iniciar el cron job
 function startExpiryJob() {
   console.log("Service expiry job iniciado (cada 5 min)");
-  expireOldServices(); // ejecutar inmediatamente al iniciar
-  setInterval(expireOldServices, 5 * 60 * 1000); // luego cada 5 min
+  expireOldServices();
+  sendScheduledReminders();
+  setInterval(expireOldServices, 5 * 60 * 1000);
+  setInterval(sendScheduledReminders, 5 * 60 * 1000);
 }
 
 module.exports = { startExpiryJob, expireOldServices };

@@ -334,6 +334,7 @@ exports.finalizeService = async (req, res) => {
     return res.json({
       ok: true,
       message: "Servicio finalizado correctamente",
+      client_id: service.client_id,
       breakdown: { total, professional_amt, commission_amt, payment_method },
     });
 
