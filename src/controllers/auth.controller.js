@@ -2,6 +2,22 @@
 const pool   = require("../db/db");
 const bcrypt = require("bcryptjs");
 const jwt    = require("jsonwebtoken");
+
+// Email service — carga con fallback para evitar crash si no existe
+let emailService = null;
+try {
+  emailService = require("../services/email.service");
+} catch (e) {
+  console.warn("email.service no disponible:", e.message);
+}
+
+function sendEmail(method, args) {
+  try {
+    if (emailService && emailService[method]) {
+      emailService[method](args).catch(() => {});
+    }
+  } catch {}
+}
 const VALID_ROLES        = ["client", "barber", "estilista", "quiropodologo", "admin"];
 const PROFESSIONAL_ROLES = ["barber", "estilista", "quiropodologo"];
 
@@ -97,11 +113,7 @@ exports.register = async (req, res) => {
     if (isProfessional) {
       notifyAdminNewProfessional(newUser).catch(() => {});
       // Enviar email de bienvenida con instrucciones de espera
-      emailService.sendWelcomeProfessionalEmail({
-        name:  newUser.name,
-        email: newUser.email,
-        role:  newUser.role,
-      }).catch(() => {});
+      sendEmail("sendWelcomeProfessionalEmail", { name: newUser.name, email: newUser.email, role: newUser.role });
     }
 
     return res.status(201).json({
@@ -259,11 +271,7 @@ exports.reviewProfessional = async (req, res) => {
       }
 
       // Email de aprobación
-      emailService.sendApprovalEmail({
-        name:  prof.name,
-        email: prof.email,
-        role:  prof.role,
-      }).catch((e) => console.warn("Email aprobacion error:", e.message));
+      sendEmail("sendApprovalEmail", { name: prof.name, email: prof.email, role: prof.role });
 
       return res.json({ ok: true, message: `Cuenta de ${prof.name} aprobada exitosamente.` });
 
@@ -293,12 +301,7 @@ exports.reviewProfessional = async (req, res) => {
       }
 
       // Email de rechazo con motivo
-      emailService.sendRejectionEmail({
-        name:   prof.name,
-        email:  prof.email,
-        role:   prof.role,
-        reason,
-      }).catch((e) => console.warn("Email rechazo error:", e.message));
+      sendEmail("sendRejectionEmail", { name: prof.name, email: prof.email, role: prof.role, reason });
 
       return res.json({ ok: true, message: `Registro de ${prof.name} rechazado.` });
     }
