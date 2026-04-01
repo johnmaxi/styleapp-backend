@@ -334,3 +334,21 @@ exports.getPendingProfessionals = async (req, res) => {
     return res.status(500).json({ ok: false, error: err.message });
   }
 };
+
+// ── Verificar token y retornar usuario actual ─────────────────────────────
+exports.me = async (req, res) => {
+  try {
+    if (!req.user) return res.status(401).json({ error: "No autorizado" });
+    const result = await pool.query(
+      `SELECT id, email, role, gender, name, profile_photo,
+              rating, phone, address, city, neighborhood,
+              is_active, registration_status
+       FROM users WHERE id = $1`,
+      [req.user.id]
+    );
+    if (!result.rows[0]) return res.status(404).json({ error: "Usuario no encontrado" });
+    return res.json({ user: result.rows[0] });
+  } catch (err) {
+    return res.status(500).json({ error: "Error interno" });
+  }
+};
