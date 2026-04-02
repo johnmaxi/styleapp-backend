@@ -9,7 +9,7 @@ const bidsRoutes           = require("./src/routes/bids.routes");
 const ratingsRoutes        = require("./src/routes/ratings.routes");
 const paymentsRoutes       = require("./src/routes/payments.routes");
 const aiRoutes             = require("./src/routes/ai.routes");
-const notifRoutes          = require("./src/routes/notifications.routes"); // NUEVO
+const notifRoutes          = require("./src/routes/notifications.routes");
 const adminRoutes          = require("./src/routes/admin.routes");
 const scheduleRoutes       = require("./src/routes/schedule.routes");
 
@@ -26,7 +26,7 @@ app.use("/api/bids",             bidsRoutes);
 app.use("/api/ratings",          ratingsRoutes);
 app.use("/api/payments",         paymentsRoutes);
 app.use("/api/ai",               aiRoutes);
-app.use("/api/notifications",    notifRoutes); // NUEVO
+app.use("/api/notifications",    notifRoutes);
 app.use("/api/admin",            adminRoutes);
 app.use("/api/schedule",         scheduleRoutes);
 
@@ -39,7 +39,7 @@ app.use("/bids",             bidsRoutes);
 app.use("/ratings",          ratingsRoutes);
 app.use("/payments",         paymentsRoutes);
 app.use("/ai",               aiRoutes);
-app.use("/notifications",    notifRoutes); // NUEVO
+app.use("/notifications",    notifRoutes);
 app.use("/admin",            adminRoutes);
 app.use("/schedule",         scheduleRoutes);
 
@@ -49,19 +49,20 @@ app.get("/", (req, res) => {
 
 app.use((req, res) => {
   res.status(404).json({ ok: false, error: `Endpoint no encontrado: ${req.method} ${req.path}` });
+});
 
 app.use((err, req, res, next) => {
   console.error("ERROR GLOBAL:", err);
   res.status(err.status || 500).json({ ok: false, error: err.message || "Error interno" });
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Backend corriendo en http://localhost:${PORT}`);
-
-  // Iniciar job de expiración de servicios
   try {
     const { startExpiryJob } = require("./src/jobs/serviceExpiry");
     startExpiryJob();
   } catch (e) {
     console.warn("No se pudo iniciar serviceExpiry job:", e.message);
   }
+});
