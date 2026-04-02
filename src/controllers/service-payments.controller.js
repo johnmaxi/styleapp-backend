@@ -326,7 +326,7 @@ exports.finalizeService = async (req, res) => {
 
     // ── Completar el servicio ─────────────────────────────────────────────
     await client.query(
-      `UPDATE service_request SET status='completed', updated_at=NOW() WHERE id=$1`,
+      `UPDATE service_request SET status='completed', completed_at=NOW(), updated_at=NOW() WHERE id=$1`,
       [service_id]
     );
     await client.query("COMMIT");

@@ -288,6 +288,27 @@ exports.acceptDirect = async (req, res) => {
       });
     }
     const sr = srResult.rows[0];
+
+    // ── Verificar disponibilidad si es servicio programado ────────────
+    if (sr.scheduled_at) {
+      const conflict = await client.query(
+        `SELECT id FROM service_request
+         WHERE assigned_barber_id = $1
+           AND status IN ('accepted','on_route','arrived')
+           AND scheduled_at IS NOT NULL
+           AND scheduled_at BETWEEN $2::timestamp - INTERVAL '2 hours'
+                                AND $2::timestamp + INTERVAL '2 hours'`,
+        [req.user.id, sr.scheduled_at]
+      );
+      if (conflict.rowCount > 0) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({
+          ok: false,
+          error: "Ya tienes un servicio programado en ese horario. No puedes aceptar servicios que se solapen en un rango de 2 horas.",
+        });
+      }
+    }
+
     const existingBid = await client.query(
       `SELECT id FROM bids WHERE service_request_id=$1 AND barber_id=$2 AND status='pending'`,
       [service_request_id, req.user.id]
