@@ -163,12 +163,74 @@ async function sendScheduledReminders() {
   }
 }
 
+
+// ── Activar servicios programados 1h antes → pasar de 'scheduled' a 'open' ──
+async function activateScheduledServices() {
+  const client = await pool.connect();
+  try {
+    // Servicios programados que empiezan en los próximos 60 min
+    const toActivate = await client.query(
+      `UPDATE service_request
+       SET status = 'open', updated_at = NOW()
+       WHERE status = 'scheduled'
+         AND scheduled_at BETWEEN NOW() AND NOW() + INTERVAL '60 minutes'
+       RETURNING id, client_id, assigned_barber_id, service_type, scheduled_at`
+    );
+
+    for (const svc of toActivate.rows) {
+      console.log(`Servicio programado activado: #${svc.id} a las ${svc.scheduled_at}`);
+
+      // Notificar al cliente
+      try {
+        const clientRes = await client.query(
+          `SELECT push_token FROM users WHERE id = $1`, [svc.client_id]
+        );
+        const clientToken = clientRes.rows[0]?.push_token;
+        if (clientToken) {
+          await sendExpoPush(
+            [clientToken],
+            "⏰ Tu servicio comienza en 1 hora",
+            `Tu ${svc.service_type} está programado para las ${new Date(svc.scheduled_at).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })}`,
+            { type: "service_reminder", service_id: svc.id, role: "client" }
+          );
+        }
+      } catch {}
+
+      // Notificar al profesional si ya está asignado
+      if (svc.assigned_barber_id) {
+        try {
+          const profRes = await client.query(
+            `SELECT push_token FROM users WHERE id = $1`, [svc.assigned_barber_id]
+          );
+          const profToken = profRes.rows[0]?.push_token;
+          if (profToken) {
+            await sendExpoPush(
+              [profToken],
+              "⏰ Servicio agendado en 1 hora",
+              `Tienes un ${svc.service_type} a las ${new Date(svc.scheduled_at).toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })}`,
+              { type: "service_reminder", service_id: svc.id, role: "professional" }
+            );
+          }
+        } catch {}
+      }
+    }
+
+    if (toActivate.rowCount > 0) {
+      console.log(`${toActivate.rowCount} servicios programados activados`);
+    }
+  } catch (err) {
+    console.error("activateScheduledServices error:", err.message);
+  } finally {
+    client.release();
+  }
+}
+
 function startExpiryJob() {
   console.log("Service expiry job iniciado (cada 5 min)");
   expireOldServices();
-  sendScheduledReminders();
+  activateScheduledServices();
   setInterval(expireOldServices, 5 * 60 * 1000);
-  setInterval(sendScheduledReminders, 5 * 60 * 1000);
+  setInterval(activateScheduledServices, 5 * 60 * 1000);
 }
 
 module.exports = { startExpiryJob, expireOldServices };
