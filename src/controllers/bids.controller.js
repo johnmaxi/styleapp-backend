@@ -274,9 +274,9 @@ exports.acceptDirect = async (req, res) => {
     started = true;
     const proType = roleToProType[req.user.role];
     const srResult = await client.query(
-      `SELECT id, price, status, professional_type, payment_method, client_id
+      `SELECT id, price, status, professional_type, payment_method, client_id, scheduled_at
        FROM service_request
-       WHERE id=$1 AND status='open' AND professional_type=$2
+       WHERE id=$1 AND status IN ('open','scheduled') AND professional_type=$2
        FOR UPDATE`,
       [service_request_id, proType]
     );
