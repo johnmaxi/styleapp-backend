@@ -15,7 +15,12 @@ exports.getProfessionalSchedule = async (req, res) => {
       d.setHours(0, 0, 0, 0);
       return d;
     })();
-    const dateTo = to ? new Date(to) : (() => {
+    const dateTo = to ? (() => {
+      // Forzar fin del día para incluir todos los servicios del último día
+      const d = new Date(to);
+      d.setHours(23, 59, 59, 999);
+      return d;
+    })() : (() => {
       const d = new Date(dateFrom);
       d.setDate(d.getDate() + 6); // domingo
       d.setHours(23, 59, 59, 999);
