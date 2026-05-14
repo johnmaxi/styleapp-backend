@@ -12,6 +12,7 @@ const aiRoutes             = require("./src/routes/ai.routes");
 const notifRoutes          = require("./src/routes/notifications.routes");
 const adminRoutes          = require("./src/routes/admin.routes");
 const scheduleRoutes       = require("./src/routes/schedule.routes");
+const storeRoutes = require("./src/routes/store.routes");
 
 const app = express();
 app.use(cors());
@@ -29,6 +30,7 @@ app.use("/api/ai",               aiRoutes);
 app.use("/api/notifications",    notifRoutes);
 app.use("/api/admin",            adminRoutes);
 app.use("/api/schedule",         scheduleRoutes);
+app.use("/api/store", storeRoutes);
 
 // ── Compatibilidad sin prefijo /api ──────────────────────────────────────
 app.use("/auth",             authRoutes);
@@ -42,6 +44,8 @@ app.use("/ai",               aiRoutes);
 app.use("/notifications",    notifRoutes);
 app.use("/admin",            adminRoutes);
 app.use("/schedule",         scheduleRoutes);
+app.use("/store",     storeRoutes);
+
 
 app.get("/", (req, res) => {
   res.json({ ok: true, message: "StyleApp API v2 funcionando" });
