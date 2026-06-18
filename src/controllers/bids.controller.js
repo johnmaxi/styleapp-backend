@@ -2,7 +2,6 @@
 const pool = require("../db/db");
 
 const PROFESSIONAL_ROLES = ["barber", "estilista", "quiropodologo"];
-const MP_METHODS = ["pse", "tarjeta"]; // métodos con precio fijo — sin contraofertas
 
 const roleToProType = {
   barber:        "profesional",
@@ -14,6 +13,18 @@ exports.createBid = async (req, res) => {
   if (!req.user || !PROFESSIONAL_ROLES.includes(req.user.role)) {
     return res.status(403).json({ ok: false, error: "Solo profesionales pueden ofertar" });
   }
+
+  // ── Bloquear si el saldo es negativo ──────────────────────────────────
+  const balRes = await pool.query(`SELECT balance FROM users WHERE id=$1`, [req.user.id]);
+  const balance = Number(balRes.rows[0]?.balance || 0);
+  if (balance < 0) {
+    return res.status(403).json({
+      ok: false,
+      error: `Tu saldo es negativo ($${balance.toLocaleString("es-CO")}). Debes recargar tu saldo antes de ofertar.`,
+      balance,
+    });
+  }
+
   const { service_request_id, amount } = req.body;
   if (!service_request_id || !amount) {
     return res.status(400).json({ ok: false, error: "Datos incompletos" });
@@ -34,16 +45,6 @@ exports.createBid = async (req, res) => {
       return res.status(409).json({
         ok: false,
         error: "Esta solicitud no esta disponible para tu perfil o ya fue tomada",
-      });
-    }
-
-    // ── BLOQUEAR contraofertas para PSE y Tarjeta ──────────────────────────
-    const paymentMethod = requestResult.rows[0].payment_method;
-    if (MP_METHODS.includes(paymentMethod)) {
-      await client.query("ROLLBACK");
-      return res.status(400).json({
-        ok: false,
-        error: `Este servicio tiene precio fijo (pago por ${paymentMethod === "pse" ? "PSE" : "Tarjeta"}). No se permiten contraofertas.`,
       });
     }
 
@@ -266,6 +267,18 @@ exports.acceptDirect = async (req, res) => {
     if (!req.user || !PROFESSIONAL_ROLES.includes(req.user.role)) {
       return res.status(403).json({ ok: false, error: "Solo profesionales pueden aceptar" });
     }
+
+    // ── Bloquear si el saldo es negativo ──────────────────────────────────
+    const balRes = await pool.query(`SELECT balance FROM users WHERE id=$1`, [req.user.id]);
+    const balance = Number(balRes.rows[0]?.balance || 0);
+    if (balance < 0) {
+      return res.status(403).json({
+        ok: false,
+        error: `Tu saldo es negativo ($${balance.toLocaleString("es-CO")}). Debes recargar tu saldo antes de aceptar servicios.`,
+        balance,
+      });
+    }
+
     const { service_request_id } = req.body;
     if (!service_request_id) {
       return res.status(400).json({ ok: false, error: "service_request_id requerido" });

@@ -12,7 +12,8 @@ const aiRoutes             = require("./src/routes/ai.routes");
 const notifRoutes          = require("./src/routes/notifications.routes");
 const adminRoutes          = require("./src/routes/admin.routes");
 const scheduleRoutes       = require("./src/routes/schedule.routes");
-const storeRoutes = require("./src/routes/store.routes");
+const storeRoutes          = require("./src/routes/store.routes");
+const rechargeRoutes       = require("./src/routes/recharge.routes");
 
 const app = express();
 app.use(cors());
@@ -26,11 +27,12 @@ app.use("/api/service-requests", serviceRequestRoutes);
 app.use("/api/bids",             bidsRoutes);
 app.use("/api/ratings",          ratingsRoutes);
 app.use("/api/payments",         paymentsRoutes);
+app.use("/api/payments",         rechargeRoutes);
 app.use("/api/ai",               aiRoutes);
 app.use("/api/notifications",    notifRoutes);
 app.use("/api/admin",            adminRoutes);
 app.use("/api/schedule",         scheduleRoutes);
-app.use("/api/store", storeRoutes);
+app.use("/api/store",            storeRoutes);
 
 // ── Compatibilidad sin prefijo /api ──────────────────────────────────────
 app.use("/auth",             authRoutes);
@@ -40,11 +42,12 @@ app.use("/service-requests", serviceRequestRoutes);
 app.use("/bids",             bidsRoutes);
 app.use("/ratings",          ratingsRoutes);
 app.use("/payments",         paymentsRoutes);
+app.use("/payments",         rechargeRoutes);
 app.use("/ai",               aiRoutes);
 app.use("/notifications",    notifRoutes);
 app.use("/admin",            adminRoutes);
 app.use("/schedule",         scheduleRoutes);
-app.use("/store",     storeRoutes);
+app.use("/store",            storeRoutes);
 
 
 app.get("/", (req, res) => {
